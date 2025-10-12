@@ -8,6 +8,7 @@ import multiprocessing as mp
 
 from tqdm import tqdm
 import numpy as np
+import pybullet
 
 from s2u.simulation import ArticulatedObjectManipulationSim
 from s2u.utils.axis2transform import axis2transformation
@@ -83,7 +84,10 @@ def sample_occ_binary(sim, mobile_links, num_point, method, var=0.005):
                                                       var=var)
     return points_occ, occ_list, new_dict
 
-
+""" ['pc_start', 'pc_start_end', 'pc_seg_start', 'pc_end', 'pc_end_start',
+ 'pc_seg_end', 'state_start', 'state_end', 'screw_axis', 'screw_moment',
+   'joint_type', 'joint_index', 'start_p_occ', 'start_occ_list', 'end_p_occ',
+     'end_occ_list', 'start_mesh_pose_dict', 'end_mesh_pose_dict', 'object_path'] """
 def main(args, rank):
     
     np.random.seed()
@@ -96,13 +100,14 @@ def main(args, rank):
                                            dense_photo=args.dense_photo)
     scenes_per_worker = args.num_scenes // args.num_proc
     pbar = tqdm(total=scenes_per_worker, disable=rank != 0)
-    
+       
     if rank == 0:
         print(f'Number of objects: {len(sim.object_urdfs)}')
     
-    for _ in range(scenes_per_worker):
+    for i in range(scenes_per_worker):
         
         sim.reset(canonical=args.canonical)
+        log_id = pybullet.startStateLogging(pybullet.STATE_LOGGING_VIDEO_MP4, f"simulation_video_{i}.mp4")
         object_path = str(sim.object_urdfs[sim.object_idx])
         
         
@@ -111,9 +116,10 @@ def main(args, rank):
         
         result['object_path'] = object_path
         
-        write_data(args.root, result)
+        write_data(args.root, result,i)
         
         pbar.update()
+        pybullet.stopStateLogging(log_id)
     
     pbar.close()
     print('Process %d finished!' % rank)
@@ -142,11 +148,9 @@ def collect_observations(sim, args):
         joint_info = sim.get_joint_info_w_sub()
     else:
         joint_info = sim.get_joint_info()
-    print(joint_info)
     all_joints = list(joint_info.keys())
-    print(all_joints)
     joint_index = all_joints.pop(np.random.randint(len(all_joints)))
-
+    
     if args.rand_state:
         for x in all_joints:
             v = joint_info[x]
@@ -154,6 +158,7 @@ def collect_observations(sim, args):
                 v = v[0]
             lower_limit, higher_limit, range_lim = get_limit(v, args)
             start_state = np.random.uniform(lower_limit, higher_limit)
+            start_state=0
             sim.set_joint_state(x, start_state)
 
     v = joint_info[joint_index]
@@ -169,14 +174,14 @@ def collect_observations(sim, args):
     end_state = start_state + move_range
     if np.random.uniform(0, 1) > 0.5:
         start_state, end_state = end_state, start_state
-    
+    start_state=0
     sim.set_joint_state(joint_index, start_state)
     
     if args.is_syn:
-        _, _, start_pc, start_seg_label, start_mesh_pose_dict = sim.acquire_segmented_pc(6, joint_info[joint_index][1])
+        _, start_pc, start_seg_label, start_mesh_pose_dict = sim.acquire_segmented_pc(6, joint_info[joint_index][1])
         start_p_occ, start_occ_list, start_mesh_pose_dict = sample_occ_binary(sim, joint_info[joint_index][1], args.num_point_occ, args.sample_method, args.occ_var)
     else:
-        _, _, start_pc, start_seg_label, start_mesh_pose_dict = sim.acquire_segmented_pc(6, [joint_index])
+        _, start_pc, start_seg_label, start_mesh_pose_dict = sim.acquire_segmented_pc(6, [joint_index])
         start_p_occ, start_occ_list = sample_occ(sim, args.num_point_occ, args.sample_method, args.occ_var)
     # canonicalize start pc
     axis, moment = sim.get_joint_screw(joint_index)
@@ -196,10 +201,10 @@ def collect_observations(sim, args):
     sim.set_joint_state(joint_index, end_state)
     
     if args.is_syn:
-        _, _, end_pc, end_seg_label, end_mesh_pose_dict = sim.acquire_segmented_pc(6, joint_info[joint_index][1])
+        _, end_pc, end_seg_label, end_mesh_pose_dict = sim.acquire_segmented_pc(6, joint_info[joint_index][1])
         end_p_occ, end_occ_list, end_mesh_pose_dict = sample_occ_binary(sim, joint_info[joint_index][1], args.num_point_occ, args.sample_method, args.occ_var)
     else:
-        _, _, end_pc, end_seg_label, end_mesh_pose_dict = sim.acquire_segmented_pc(6, [joint_index])
+        _, end_pc, end_seg_label, end_mesh_pose_dict = sim.acquire_segmented_pc(6, [joint_index])
         end_p_occ, end_occ_list = sample_occ(sim, args.num_point_occ, args.sample_method, args.occ_var)
     # canonicalize end pc
     axis, moment = sim.get_joint_screw(joint_index)
@@ -227,7 +232,7 @@ def collect_observations(sim, args):
             'screw_axis': axis,
             'screw_moment': moment,
             'joint_type': joint_type,
-            'joint_index': 1 if args.is_syn else joint_index,
+            'joint_index': joint_index,
             'start_p_occ': start_p_occ, 
             'start_occ_list': start_occ_list, 
             'end_p_occ': end_p_occ, 
@@ -237,7 +242,7 @@ def collect_observations(sim, args):
         }
 
     return result
-
+#1 if args.is_syn else
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -256,13 +261,12 @@ if __name__ == "__main__":
     parser.add_argument("--global-scaling", type=float, default=0.5)
     parser.add_argument("--dense-photo", action="store_true")
 
-
     args = parser.parse_args()
     if 'syn' in args.object_set:
         args.is_syn = True
     else:
         args.is_syn = False
-    (args.root / "scenes").mkdir(parents=True, exist_ok=True)
+    (args.root / "scenes").mkdir(parents=True)
     if args.num_proc > 1:
         #print(args.num_proc)
         pool = mp.get_context("spawn").Pool(processes=args.num_proc)
@@ -272,3 +276,4 @@ if __name__ == "__main__":
         pool.join()
     else:
         main(args, 0)
+    

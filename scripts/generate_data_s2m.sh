@@ -19,3 +19,6 @@ python scripts/generate_data_seg.py --object-set syn/cabinet/test data/syn/cabin
 python scripts/generate_data_seg.py --object-set syn/example data/syn/example_t1 --num-scenes 10 --pos-rot 0 --global-scaling 0.6 --num-proc 1 --sample-method mix --dense-photo --sim-gui
 python scripts/generate_data_seg.py --object-set syn/example1 data/syn/example1_t1 --num-scenes 10 --pos-rot 0 --global-scaling 0.6 --num-proc 1 --sample-method mix --dense-photo --sim-gui
 python scripts/generate_data_seg.py --object-set syn/example2 data/syn/example2_t1 --num-scenes 20 --pos-rot 0 --global-scaling 0.6 --num-proc 1 --sample-method mix --dense-photo --sim-gui
+python scripts/generate_data_seg2.py --object-set syn/2L1J_Y data/syn/CORR1 --num-scenes 10 --pos-rot 0 --global-scaling 0.6 --num-proc 1 --sample-method mix --dense-photo --sim-gui --rand-state
+python scripts/generate_data_seg.py --object-set syn/microwave/train data/syn_local/microwave --num-scenes 10 --pos-rot 0 --global-scaling 0.6 --num-proc 1 --sample-method mix --dense-photo --sim-gui --rand-state
+python scripts/generate_data_seg1.py --object-set Shape2Motion/cabinet/eval data/Shape2Motion_local/cabinet_eval --num-scenes 5 --pos-rot 1 --global-scaling 0.6 --num-proc 1 --sample-method mix --dense-photo --sim-gui --rand-state

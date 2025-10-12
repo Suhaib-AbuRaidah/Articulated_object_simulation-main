@@ -11,7 +11,7 @@ from s2u.perception import *
 from s2u.utils.transform import Transform, Rotation, get_transform
 from s2u.utils.saver import get_mesh_pose_dict_from_world
 from s2u.utils.visual import as_mesh
-
+from s2u.utils.rgb_feature_matching import orb_matching
 
 class ArticulatedObjectManipulationSim(object):
     def __init__(self, object_set, size=0.3, global_scaling=0.5, gui=True, seed=None, add_noise=False, name_list=None, dense_photo=False, urdf_root=None):
@@ -23,7 +23,6 @@ class ArticulatedObjectManipulationSim(object):
             self.urdf_root = Path(urdf_root)
         self.object_set = object_set
         self.discover_objects(name_list)
-
         self.gui = gui
         self.global_scaling = global_scaling
         self.dense_photo = dense_photo
@@ -228,14 +227,16 @@ class ArticulatedObjectManipulationSim(object):
         
         timing = 0.0
         depth_imgs = []
+        rgb_imgs = []
         for extrinsic in extrinsics:
-            depth_img = self.camera.render(extrinsic)[1]
-            high_res_tsdf.integrate(depth_img, self.camera.intrinsic, extrinsic)
+            rgb_img ,depth_img = self.camera.render(extrinsic)
+            high_res_tsdf.integrate_rgb(depth_img, rgb_img, self.camera.intrinsic, extrinsic)
             depth_imgs.append(depth_img)
+            rgb_imgs.append(rgb_img)
         pc = high_res_tsdf.get_cloud()
         pc = np.asarray(pc.points)
         
-        return depth_imgs, pc, mesh_pose_dict
+        return pc, depth_imgs, rgb_imgs, mesh_pose_dict
 
 
     def acquire_segmented_pc(self, n, mobile_links, N=None):
@@ -276,6 +277,7 @@ class ArticulatedObjectManipulationSim(object):
         
         timing = 0.0
         depth_imgs = []
+        rgb_imgs = []
         for extrinsic in extrinsics:
             rgb_img, depth_img, (seg_uid, seg_link) = self.camera.render(extrinsic, flags=pybullet.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX)
             seg_uid += 1
@@ -286,14 +288,16 @@ class ArticulatedObjectManipulationSim(object):
             seg_rgb = (seg_rgb.astype(np.float32) * 255).astype(np.uint8)
             seg_rgb = np.stack([seg_rgb] * 3, axis=-1)
             # import pdb; pdb.set_trace()
-            high_res_tsdf.integrate_rgb(depth_img, seg_rgb, self.camera.intrinsic, extrinsic)
+            rgbd = high_res_tsdf.integrate_rgb(depth_img, seg_rgb, self.camera.intrinsic, extrinsic)
             depth_imgs.append(depth_img)
+            rgb_imgs.append(rgb_img)
         tmp = high_res_tsdf._volume.extract_point_cloud()
+        #correspondenses = orb_matching(rgb_imgs,depth_imgs, self.camera.intrinsic)
         pc = np.asarray(tmp.points)
         colors = np.asarray(tmp.colors)
         colors = np.mean(colors, axis=1)
         seg_mask = colors > 0.5
-        return depth_imgs, pc, seg_mask, mesh_pose_dict
+        return depth_imgs, rgb_imgs, pc, seg_mask, mesh_pose_dict
 
     def acquire_link_pc(self, link, num_points=2048):
         result_dict = get_mesh_pose_dict_from_world(self.world, False)
