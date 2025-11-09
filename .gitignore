@@ -128,12 +128,14 @@ dmypy.json
 # Pyre type checker
 .pyre/
 /scene
+/scenes
 /data
 /notebooks
 .DS_Store
 .vscode
 outputs
 *.swp
-
+# vis files
+/vis*.py
 # mp4
 *.mp4
