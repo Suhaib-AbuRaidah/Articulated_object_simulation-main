@@ -9,6 +9,7 @@ import multiprocessing as mp
 from tqdm import tqdm
 import numpy as np
 from scipy.spatial.distance import cdist
+from collections import OrderedDict
 
 from s2u.simulation import ArticulatedObjectManipulationSim
 from s2u.utils.axis2transform import axis2transformation
@@ -78,6 +79,9 @@ def sample_occ(sim, num_point, method, var=0.005):
     for k, v in result_dict.items():
         scene = trimesh.Scene()
         for mesh_path, scale, pose in v:
+            print(mesh_path)
+            if mesh_path.startswith('#'): # primitive
+                continue
             mesh = trimesh.load(mesh_path)
             mesh.apply_scale(scale)
             mesh.apply_transform(pose)
@@ -154,7 +158,7 @@ def main(args, rank):
             sim, args)
         result['object_path'] = object_path
         # print(result.keys())
-        write_data(args.root, result)
+        # write_data(args.root, result)
         
         pbar.update()
     
@@ -188,9 +192,13 @@ def collect_observations(sim, args):
     else:
         joint_info = sim.get_joint_info()
     all_joints = list(joint_info.keys())
+    # print(len(all_joints))
+    # print(all_joints)
+    print(joint_info)
     
-    start_state_list = []
-    initial_state_list = []
+    max_joint = max(all_joints) + 1
+    start_state_list = [0.0] * max_joint
+    initial_state_list = [0.0] * max_joint
     if args.rand_state:
         for x in all_joints:
             v = joint_info[x]
@@ -198,12 +206,12 @@ def collect_observations(sim, args):
                 v = v[0]
             lower_limit, higher_limit, range_lim = get_limit(v, args)
             start_state = np.random.uniform(lower_limit, higher_limit)
-            start_state_list.append(start_state)
+            start_state_list[x]=(start_state)
             # print(v[10])
-            initial_state_list.append(v[10])
+            initial_state_list[x]=(v[10])
             sim.set_joint_state(x, start_state)
 
-    for joint in all_joints:
+    for ite, joint in enumerate(all_joints):
         # joint_index = all_joints.pop(np.random.randint(len(all_joints)))
         for index in all_joints:
             sim.set_joint_state(x, initial_state_list[index])
@@ -211,8 +219,19 @@ def collect_observations(sim, args):
             for x in all_joints:
                 sim.set_joint_state(x, start_state_list[x])
         joint_index = joint
-        parts_connections.append((joint_index+1, joint_info[joint][-1]+1))
+        all_joints_array = np.array(all_joints)
+        a = np.where(all_joints_array == joint_index)[0] + 1
+        b = np.where(all_joints_array == joint_info[joint_index][-1])[0] + 1
+        # print(f"joint_index:{joint_index}, connected to:{joint_info[joint_index][-1]}")
+        # replace empty arrays with [0]
+        if a.size == 0:
+            a = np.array([0])
+        if b.size == 0:
+            b = np.array([0])
+
+        parts_connections.append((a, b))
         # print(f'Process joint {joint_index}')
+        # print(joint_info[joint][-1])
 
         v = joint_info[joint_index]
         if args.is_syn:
@@ -244,9 +263,8 @@ def collect_observations(sim, args):
                 start_p_occ, start_occ_list, start_mesh_pose_dict = sample_occ_binary(sim, joint_info[joint_index][1], args.num_point_occ, args.sample_method, args.occ_var)
             else:
                 _, _, start_pc, start_seg_label, start_mesh_pose_dict = sim.acquire_segmented_pc(6, [joint_index])
-                start_p_occ, start_occ_list = sample_occ(sim, args.num_point_occ, args.sample_method, args.occ_var)
-            num_points = start_pc.shape[0]
-
+                # start_p_occ, start_occ_list = sample_occ(sim, args.num_point_occ, args.sample_method, args.occ_var)
+                start_p_occ, start_occ_list = None, None
         else:
             if args.is_syn:
                 _, _, start_pc, start_seg_label, start_mesh_pose_dict = sim.acquire_segmented_pc(6, joint_info[joint_index][1])
@@ -255,8 +273,9 @@ def collect_observations(sim, args):
             else:
                 _, _, start_pc, start_seg_label, start_mesh_pose_dict = sim.acquire_segmented_pc(6, [joint_index])
                 # start_pc, start_seg_label = downsample_point_cloud(start_pc, start_seg_label, num_points)
-                start_p_occ, start_occ_list = sample_occ(sim, args.num_point_occ, args.sample_method, args.occ_var)
-    
+                # start_p_occ, start_occ_list = sample_occ(sim, args.num_point_occ, args.sample_method, args.occ_var)
+                start_p_occ, start_occ_list = None, None
+
         # canonicalize start pc
         axis, moment = sim.get_joint_screw(joint_index)
         state_change = end_state - start_state
@@ -279,7 +298,9 @@ def collect_observations(sim, args):
             end_p_occ, end_occ_list, end_mesh_pose_dict = sample_occ_binary(sim, joint_info[joint_index][1], args.num_point_occ, args.sample_method, args.occ_var)
         else:
             _, _, end_pc, end_seg_label, end_mesh_pose_dict = sim.acquire_segmented_pc(6, [joint_index])
-            end_p_occ, end_occ_list = sample_occ(sim, args.num_point_occ, args.sample_method, args.occ_var)
+            # end_p_occ, end_occ_list = sample_occ(sim, args.num_point_occ, args.sample_method, args.occ_var)
+            end_p_occ, end_occ_list = None, None
+
         # canonicalize end pc
         axis, moment = sim.get_joint_screw(joint_index)
         state_change = start_state - end_state
@@ -295,24 +316,24 @@ def collect_observations(sim, args):
         canonical_end_pc[end_seg_label] = rotated
 
         result = {
-                f'pc_start_{joint}': start_pc,
-                f'pc_start_end_{joint}': canonical_start_pc,
-                f'pc_seg_start_{joint}': start_seg_label,
-                f'pc_end_{joint}': end_pc,
-                f'pc_end_start_{joint}': canonical_end_pc,
-                f'pc_seg_end_{joint}': end_seg_label,
-                f'state_start_{joint}': start_state,
-                f'state_end_{joint}': end_state,
-                f'screw_axis_{joint}': axis,
-                f'screw_moment_{joint}': moment,
-                f'joint_type_{joint}': joint_type,
-                f'joint_index_{joint}': 1 if args.is_syn else joint_index,
-                f'start_p_occ_{joint}': start_p_occ, 
-                f'start_occ_list_{joint}': start_occ_list, 
-                f'end_p_occ_{joint}': end_p_occ, 
-                f'end_occ_list_{joint}': end_occ_list,
-                f'start_mesh_pose_dict_{joint}': start_mesh_pose_dict,
-                f'end_mesh_pose_dict_{joint}': end_mesh_pose_dict
+                f'pc_start_{ite}': start_pc,
+                f'pc_start_end_{ite}': canonical_start_pc,
+                f'pc_seg_start_{ite}': start_seg_label,
+                f'pc_end_{ite}': end_pc,
+                f'pc_end_start_{ite}': canonical_end_pc,
+                f'pc_seg_end_{ite}': end_seg_label,
+                f'state_start_{ite}': start_state,
+                f'state_end_{ite}': end_state,
+                f'screw_axis_{ite}': axis,
+                f'screw_moment_{ite}': moment,
+                f'joint_type_{ite}': joint_type,
+                f'joint_index_{ite}': 1 if args.is_syn else joint_index,
+                f'start_p_occ_{ite}': start_p_occ, 
+                f'start_occ_list_{ite}': start_occ_list, 
+                f'end_p_occ_{ite}': end_p_occ, 
+                f'end_occ_list_{ite}': end_occ_list,
+                f'start_mesh_pose_dict_{ite}': start_mesh_pose_dict,
+                f'end_mesh_pose_dict_{ite}': end_mesh_pose_dict
             }
         total_result.append(result)
     result_dict = {}
@@ -320,8 +341,8 @@ def collect_observations(sim, args):
         result_dict = {**result_dict, **total_result[i]}
 
     mask_start_list = []
-    for joint in range(len(all_joints)):
-        mask_start = result_dict[f'pc_seg_start_{joint}']
+    for q in range(len(all_joints)):
+        mask_start = result_dict[f'pc_seg_start_{q}']
         mask_start_list.append(mask_start)
 
     total = np.zeros_like(mask_start_list[0])
@@ -334,10 +355,11 @@ def collect_observations(sim, args):
 
 
     parts_conne_gt = np.zeros((len(all_joints)+1, len(all_joints)+1))
+    # print(f"parts_connections:{parts_connections}")
     for i in range(len(parts_connections)):
         parts_conne_gt[parts_connections[i][0], parts_connections[i][1]] = 1
         parts_conne_gt[parts_connections[i][1], parts_connections[i][0]] = 1
-
+    # print(parts_conne_gt)
     result_dict['parts_conne_gt'] = parts_conne_gt
 
     mask_start_list.insert(0, base_mask)

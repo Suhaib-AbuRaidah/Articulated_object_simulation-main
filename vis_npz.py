@@ -2,7 +2,38 @@ import numpy as np
 import open3d as o3d
 import pathlib
 import glob
-import os   
+import os
+
+def create_axis_arrow(origin, direction, length=0.08, radius=0.0001, color=[0, 0, 1],tr= np.array([0,0,0])):
+    """
+    Create an Open3D arrow pointing in `direction` starting at `origin`.
+    """
+    from scipy.spatial.transform import Rotation as R
+# Translate to origin
+    direction = direction / (np.linalg.norm(direction) + 1e-8)
+    end = origin + direction * (length/2 + length/10)
+    arrow = o3d.geometry.TriangleMesh.create_arrow(
+        cylinder_radius=radius*10,
+        cone_radius=radius*10,
+        cylinder_height=length,
+        cone_height=length/10
+    )
+    arrow.paint_uniform_color(color)
+
+    # Rotate arrow from +Z (default) to desired direction
+    default_dir = np.array([0, 0, 1])
+    rot_axis = np.cross(default_dir, direction)
+    if np.linalg.norm(rot_axis) < 1e-6:
+        rot_matrix = np.eye(3) if np.dot(default_dir, direction) > 0 else -np.eye(3)
+    else:
+        rot_angle = np.arccos(np.clip(np.dot(default_dir, direction), -1, 1))
+        rot_matrix = R.from_rotvec(rot_angle * rot_axis / np.linalg.norm(rot_axis)).as_matrix()
+    arrow.rotate(rot_matrix, center=(0,0,0))
+
+    # Translate to origin
+    arrow.translate(end+tr, relative=False)
+    return arrow   
+
 def create_color_array_grouped(N, colors=None, group_size=1500):
     """
     Create a numpy array where colors are applied in groups
@@ -30,15 +61,32 @@ def create_color_array_grouped(N, colors=None, group_size=1500):
         result[start_idx:end_idx] = colors[color_idx]
     
     return result
+def downsample_point_cloud(points, labels_list, num_points=1024):
+    """
+    Randomly downsample the point cloud to a fixed size.
+    """
+    N = points.shape[0]
+    np.random.seed(97)
+    if N >= num_points:
+        indices = np.random.choice(N, num_points, replace=False)
+    else:
+        indices = np.random.choice(N, num_points, replace=True)
 
-file_paths = "./data/Shape2Motion_local/cabinet/scenes/*.npz"
+    # Downsample points and labels correctly
+    points = points[indices]
+    new_labels_list = [labels[indices] for labels in labels_list]
+
+    return points, new_labels_list
+
+file_paths = "./data/Shape2Motion_gcn/cabinet/scenes/*.npz"
 
 data_list = []
 for f in glob.glob(file_paths):
     data = np.load(f, allow_pickle=True)
     data_list.append(data)
 print(len(data_list))
-for i in range(len(data_list)):
+for i in [67]:
+    print(f"index:{i}")
     pc_start_list = []
     pc_end_list = []
     mask_start_list = []
@@ -61,8 +109,9 @@ for i in range(len(data_list)):
     Adjacency_matrix = data_list[index]['adj']
     parts_conne_gt = data_list[index]['parts_conne_gt']
     print(Adjacency_matrix)
-    print("\n")
     print(parts_conne_gt)
+    print("\n")
+    # print(parts_conne_gt)
     # total_pc_list = []
     # for i in range(num_joints):
     #     pc_start = pc_start_list[i]
@@ -70,13 +119,16 @@ for i in range(len(data_list)):
     #     pc_start = pc_start[mask]
     #     total_pc_list.append(pc_start)
     # pc_start = np.concatenate(total_pc_list, axis=0)
-
+    pc_start = pc_start_list[0].copy()
+    # pc_start, mask_start_list = downsample_point_cloud(pc_start, mask_start_list, 90000)
     print(pc_start_list[0].shape[0])
     pcd_start = o3d.geometry.PointCloud()
-    pcd_start.points = o3d.utility.Vector3dVector(pc_start_list[0])
+    pcd_start.points = o3d.utility.Vector3dVector(pc_start)
     color = np.zeros_like(pc_start)
     # color = create_color_array_grouped(pc_start_list[0].shape[0])
+    np.random.seed(0)
     for i in range(num_joints):
+        color[mask_start_list[i]] = np.random.uniform(0,1,3)
         if i==0:
             color[mask_start_list[i]] = np.array([1, 0, 0])
         elif i==1:
@@ -91,9 +143,28 @@ for i in range(len(data_list)):
             color[mask_start_list[i]] = np.array([0, 1, 1])
         elif i==6:
             color[mask_start_list[i]] = np.array([0.5, 0.5, 0.5])
+        elif i==7:
+            color[mask_start_list[i]] = np.array([0.5, 1, 0.5])
     pcd_start.colors = o3d.utility.Vector3dVector(color)
     pcd_start.colors = o3d.utility.Vector3dVector(color)
     pcd_end = o3d.geometry.PointCloud()
     pcd_end.points = o3d.utility.Vector3dVector(pc_end)
+    pivot_point_pred = np.array([0.2, 0.15, 0.2])
+    joint_direction = np.array([1, 0, 0.1])
+    pivot_point_pred2 = np.array([0.2, 0.16, 0.17])
+    joint_direction2 = np.array([0, 0.05, 1])
+    sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.002)
+    sphere.paint_uniform_color([1, 0, 1]) 
+    sphere.translate(np.asarray(pivot_point_pred),relative=False)
+
+    sphere2 = o3d.geometry.TriangleMesh.create_sphere(radius=0.002)
+    sphere2.paint_uniform_color([1, 0, 1]) 
+    sphere2.translate(np.asarray(pivot_point_pred2),relative=False)
+
+    arrow = create_axis_arrow(pivot_point_pred, joint_direction, length=0.07,tr=np.array([0,0,0]))
+    arrow2 = create_axis_arrow(pivot_point_pred2, joint_direction2, length=0.07,tr=np.array([0,0,0]))
+
+    # mesh = mesh_from_pcd(pcd_target1)
     o3d.visualization.draw_geometries([pcd_start])
+    # o3d.visualization.draw_geometries([pcd_start, arrow, arrow2, sphere, sphere2])
 

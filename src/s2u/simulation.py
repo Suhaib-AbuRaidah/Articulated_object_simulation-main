@@ -138,10 +138,13 @@ class ArticulatedObjectManipulationSim(object):
     def get_joint_info(self):
         num_joints = self.world.p.getNumJoints(self.object.uid)
         joint_info = OrderedDict()
+        # ite = 0
         for joint_idx in range(num_joints):
             v = self.world.p.getJointInfo(self.object.uid, joint_idx)
             if v[2] in [0, 1]: # not revoluted or prsimatic
+                # print(joint_idx,ite)
                 joint_info[joint_idx] = v
+                # ite+=1
         return joint_info
 
     def get_joint_info_w_sub(self):
@@ -247,7 +250,7 @@ class ArticulatedObjectManipulationSim(object):
         
         mesh_pose_dict = get_mesh_pose_dict_from_world(self.world, False)
         # tsdf = TSDFVolume(self.size, 40)
-        high_res_tsdf = TSDFVolume(self.size, 120, color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8)
+        high_res_tsdf = TSDFVolume(self.size, 128, color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8)
 
         origin = Transform(Rotation.identity(), np.r_[self.size / 2, self.size / 2, self.size / 2])
         r = 1.2 * self.size
