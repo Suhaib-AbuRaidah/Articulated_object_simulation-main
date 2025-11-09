@@ -4,6 +4,11 @@ This repo stores the codes for data generation of *Ditto: Building Digital Twins
 
 ## Installation
 
+### create conda environment
+1. `conda create -n data_gen python==3.8`
+2. `conda activate data_gen`
+
+### install dependancies
 1. `pip install -r requirements.txt`
 2. `pip install -e .`
 3. `python scripts/convonet_setup.py build_ext --inplace`
