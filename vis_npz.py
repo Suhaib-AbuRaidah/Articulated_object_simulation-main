@@ -100,7 +100,7 @@ def downsample_point_cloud(points, labels_list, num_points=1024):
 
     return points, new_labels_list
 
-file_paths = "/home/suhaib/Ditto/Articulated_object_simulation-main/data/Shape2Motion_gcn/robotic_arm_testing1/scenes/*.npz"
+file_paths = "/home/suhaib/Ditto/Articulated_object_simulation-main/data/Shape2Motion_gcn/robotic_arm_testing3/scenes/*.npz"
 
 data_list = []
 for f in glob.glob(file_paths):
@@ -108,52 +108,78 @@ for f in glob.glob(file_paths):
     data_list.append(data)
 print(len(data_list))
 
-data = data_list[0]
-print(data.files)
+for i in range(len(data_list)):
+    data = data_list[i]
+    print(data.files)
 
-print(f"Joint type list: {data['joint_type']}\n")
-print(f"Adjacency matrix: {data['adj']}\n")
-print(f"Parts connectivity ground truth: {data['parts_conne_gt']}\n")
-print(f"Axis of rotation: {data['screw_axis']}\n")
-print(f"Angles between parts: {data['state_diff']}\n")
+    print(f"Joint type list: \n{data['joint_type']}\n")
+    print(f"Adjacency matrix: \n{data['adj']}\n")
+    print(f"Parts connectivity ground truth: \n{data['parts_conne_gt']}\n")
+    print(f"Axis of rotation: {data['screw_axis']}\n")
+    print(f"Angles between parts: {data['state_diff']}\n")
 
-pc_start = data['pc_start']
-print(f"pc_start.shape: {pc_start.shape}")
-pc_end = data['pc_end']
-print(f"pc_end.shape: {pc_end.shape}")
+    pc_start = data['pc_start']
+    print(f"pc_start.shape: {pc_start.shape}")
+    pc_end = data['pc_end']
+    print(f"pc_end.shape: {pc_end.shape}")
 
-masks_start = data['pc_seg_start'].item()
-masks_end = data['pc_seg_end'].item()
-masks_start = [masks_start[i] for i in range(len(masks_start))]
-pc_start, masks_start = downsample_point_cloud(pc_start, masks_start, 1000)
-colors_start = np.zeros_like(pc_start)
-np.random.seed(0)
-for i in range(len(masks_start)):
-    colors_start[masks_start[i]] = np.random.rand(3)
-pcd1 = o3d.geometry.PointCloud()
-pcd1.points = o3d.utility.Vector3dVector(pc_start)
-pcd1.colors = o3d.utility.Vector3dVector(colors_start)
-pcd1.estimate_normals()
-pcd1.orient_normals_consistent_tangent_plane(30)
+    masks_start = data['pc_seg_start'].item()
+    masks_end = data['pc_seg_end'].item()
+    masks_start = [masks_start[i] for i in range(len(masks_start))]
+    # pc_start, masks_start = downsample_point_cloud(pc_start, masks_start, 1000)
+    colors_start = np.zeros_like(pc_start)
+    np.random.seed(0)
+    for i in range(len(masks_start)):
+        colors_start[masks_start[i]] = np.random.rand(3)
+    pcd1 = o3d.geometry.PointCloud()
+    pcd1.points = o3d.utility.Vector3dVector(pc_start)
+    pcd1.colors = o3d.utility.Vector3dVector(colors_start)
+    pcd1.estimate_normals()
+    pcd1.orient_normals_consistent_tangent_plane(30)
 
-mesh1, densities1 = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-    pcd1, depth=9
-)
-colors_end = np.zeros_like(pc_end)
-np.random.seed(0)
-for i in range(len(masks_end)):
-    colors_end[masks_end[i]] = np.random.rand(3)
-pcd2 = o3d.geometry.PointCloud()
-pcd2.points = o3d.utility.Vector3dVector(pc_end)
-pcd2.colors = o3d.utility.Vector3dVector(colors_end)
+    mesh1, densities1 = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+        pcd1, depth=9
+    )
+    np.random.seed(0)
 
-pcd2.estimate_normals()
-pcd2.orient_normals_consistent_tangent_plane(30)
-mesh2, densities2 = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-    pcd2, depth=9
-)
+    mesh_start = data['mesh_start'].item()
+    start_mesh = o3d.geometry.TriangleMesh()
+    for key, value in mesh_start.items():
+        vertices, triangles = value
+        mesh = o3d.geometry.TriangleMesh()
+        mesh.vertices = o3d.utility.Vector3dVector(vertices)
+        mesh.triangles = o3d.utility.Vector3iVector(triangles)
+        mesh.compute_vertex_normals()
+        mesh.paint_uniform_color(np.random.rand(3))
+        start_mesh += mesh
+    np.random.seed(0)
+    mesh_end = data['mesh_end'].item()
+    end_mesh = o3d.geometry.TriangleMesh()
+    for key, value in mesh_end.items():
+        vertices, triangles = value
+        mesh = o3d.geometry.TriangleMesh()
+        mesh.vertices = o3d.utility.Vector3dVector(vertices)
+        mesh.triangles = o3d.utility.Vector3iVector(triangles)
+        mesh.compute_vertex_normals()
+        mesh.paint_uniform_color(np.random.rand(3))
+        end_mesh += mesh
 
-o3d.visualization.draw_geometries([mesh1], mesh_show_back_face=True)
+    colors_end = np.zeros_like(pc_end)
+    np.random.seed(0)
+    for i in range(len(masks_end)):
+        colors_end[masks_end[i]] = np.random.rand(3)
+    pcd2 = o3d.geometry.PointCloud()
+    pcd2.points = o3d.utility.Vector3dVector(pc_end)
+    pcd2.colors = o3d.utility.Vector3dVector(colors_end)
+
+    pcd2.estimate_normals()
+    pcd2.orient_normals_consistent_tangent_plane(30)
+    mesh2, densities2 = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+        pcd2, depth=9
+    )
+
+    o3d.visualization.draw_geometries([start_mesh, end_mesh], mesh_show_back_face=True)
+    o3d.visualization.draw_geometries([pcd1, pcd2])
 
 
 

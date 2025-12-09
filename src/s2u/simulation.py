@@ -318,10 +318,25 @@ class ArticulatedObjectManipulationSim(object):
 
 		mesh_pose_dict = get_mesh_pose_dict_from_world(self.world, False)
 
+		meshes = {}
+		for link_id, entries in mesh_pose_dict.items():
+			entries = entries[0]
+			mesh_path, mesh_scale, mesh_T = entries[0],entries[1],entries[2]
+			if mesh_path.startswith('#'): # primitive
+				continue
+			m = trimesh.load(mesh_path, force='mesh')
+			S = np.eye(4)
+			S[:3, :3] *= mesh_scale[0]
+			T = mesh_T @ S
+			m.apply_transform(T)
+			vertices = np.asarray(m.vertices, dtype=np.float32)
+			triangles = np.asarray(m.faces,dtype=np.int32)
+			meshes[link_id] = (vertices, triangles)
+
 		# Create one TSDF per link
 		tsdf_per_link = {
 			l: TSDFVolume(
-				self.size, 350,
+				self.size, 192,
 				color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8
 			)
 			for l in mobile_links
@@ -401,7 +416,7 @@ class ArticulatedObjectManipulationSim(object):
 
 		pc = tsdf_per_link[mobile_links[0]]._volume.extract_point_cloud()
 		pc = np.asarray(pc.points)
-		return depth_imgs, rgb_imgs, pc, masks_per_link, mesh_pose_dict
+		return depth_imgs, rgb_imgs, pc, masks_per_link, mesh_pose_dict, meshes
 
 	def acquire_link_pc(self, link, num_points=2048):
 		result_dict = get_mesh_pose_dict_from_world(self.world, False)

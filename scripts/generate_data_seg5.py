@@ -55,6 +55,9 @@ def build_graph_from_parts(pointclouds, threshold):
     for i in range(n):
         for j in range(i + 1, n):
             # compute minimum distance between two parts
+            if pointclouds[i].shape[0] == 0 or pointclouds[j].shape[0] == 0:
+                adj[i, j] = adj[j, i] = 0
+                continue
             d = np.min(cdist(pointclouds[i], pointclouds[j]))
             # print(f"distance between joints {i} and {j} is {d}")
             if d < threshold:
@@ -192,6 +195,8 @@ def collect_observations(sim, args):
     else:
         joint_info = sim.get_joint_info()
     all_joints = list(joint_info.keys())
+    # if all_joints[0] == 0:
+    #     all_joints = [x+1 for x in all_joints]
     
     max_joint = max(all_joints) + 1
     start_state_list = [0.0] * max_joint
@@ -251,16 +256,19 @@ def collect_observations(sim, args):
 
     joints_syn = [joint_info[joint_index][1] for joint_index in all_joints]
     joints_real = [joint_index for joint_index in all_joints]
-    joints_real.insert(0, 0)  # add the base link
+    if all_joints[0] != 0:
+        joints_real.insert(0, 0)  # add the base link
+    else:
+        joints_real.insert(len(joints_real), joints_real[-1]+1)  # add the base link
     # print(f"joints_syn:{joints_syn}")
     # print(f"joints_real:{joints_real}")
     if args.is_syn:
-        _, _, start_pc, start_seg_label, start_mesh_pose_dict = sim.acquire_segmented_pcs(6, joints_syn)
+        _, _, start_pc, start_seg_label, _, start_meshes = sim.acquire_segmented_pcs(6, joints_syn)
         # start_pc, start_seg_label = downsample_point_cloud(start_pc, start_seg_label, num_points)
         start_p_occ, start_occ_list, start_mesh_pose_dict = sample_occ_binary(sim, joints_syn, args.num_point_occ, args.sample_method, args.occ_var)
 
     else:
-        _, _, start_pc, start_seg_label, start_mesh_pose_dict = sim.acquire_segmented_pcs(6, joints_real)
+        _, _, start_pc, start_seg_label, _, start_meshes = sim.acquire_segmented_pcs(6, joints_real)
         # start_pc, start_seg_label = downsample_point_cloud(start_pc, start_seg_label, num_points)
         # start_p_occ, start_occ_list = sample_occ(sim, args.num_point_occ, args.sample_method, args.occ_var)
         start_p_occ, start_occ_list = None, None
@@ -271,10 +279,10 @@ def collect_observations(sim, args):
 
     
     if args.is_syn:
-        _, _, end_pc, end_seg_label, end_mesh_pose_dict = sim.acquire_segmented_pcs(6, joints_syn)
+        _, _, end_pc, end_seg_label, _, end_meshes = sim.acquire_segmented_pcs(6, joints_syn)
         end_p_occ, end_occ_list, end_mesh_pose_dict = sample_occ_binary(sim, joints_syn, args.num_point_occ, args.sample_method, args.occ_var)
     else:
-        _, _, end_pc, end_seg_label, end_mesh_pose_dict = sim.acquire_segmented_pcs(6, joints_real)
+        _, _, end_pc, end_seg_label, _, end_meshes = sim.acquire_segmented_pcs(6, joints_real)
         # end_p_occ, end_occ_list = sample_occ(sim, args.num_point_occ, args.sample_method, args.occ_var)
         end_p_occ, end_occ_list = None, None
 
@@ -291,6 +299,8 @@ def collect_observations(sim, args):
             f'screw_moment': moment_list,
             f'joint_type': joint_type_list,
             f'joint_index': joints_syn if args.is_syn else joints_real,
+            f'mesh_start': start_meshes,
+            f'mesh_end': end_meshes,
         }
 
 
@@ -302,7 +312,6 @@ def collect_observations(sim, args):
         parts_conne_gt[parts_connections[i][1], parts_connections[i][0]] = 1
     # print(parts_conne_gt)
     result['parts_conne_gt'] = parts_conne_gt
-
 
     start_pc = normalize(start_pc)
     parts_pcs = []
