@@ -303,7 +303,7 @@ class ArticulatedObjectManipulationSim(object):
 		return depth_imgs, rgb_imgs, pc, seg_mask, mesh_pose_dict
 	
 
-	def acquire_segmented_pcs(self, n, mobile_links, N=None):
+	def acquire_segmented_pcs(self, n, links, N=None):
 		"""
 		Render synthetic depth images from n viewpoints and integrate into
 		multiple TSDF volumes: one TSDF per mobile link.
@@ -339,7 +339,7 @@ class ArticulatedObjectManipulationSim(object):
 				self.size, 192,
 				color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8
 			)
-			for l in mobile_links
+			for l in links
 		}
 
 		origin = Transform(
@@ -389,7 +389,7 @@ class ArticulatedObjectManipulationSim(object):
 			# -------------------------------------
 			# Build & integrate one mask per link
 			# -------------------------------------
-			for l in mobile_links:
+			for l in links:
 				mask_l = (seg_uid.astype(bool) & (seg_link == l)).astype(np.uint8)
 				seg_rgb = np.stack([mask_l * 255] * 3, axis=-1)
 
@@ -406,15 +406,17 @@ class ArticulatedObjectManipulationSim(object):
 		pcs_per_link = {}
 		masks_per_link = {}
 
-		for l in mobile_links:
+		for l in links:
 			tmp = tsdf_per_link[l]._volume.extract_point_cloud()
 
 			colors_l = np.asarray(tmp.colors)
 			mask_l = (np.mean(colors_l, axis=1) > 0.5)
-
-			masks_per_link[l] = mask_l
-
-		pc = tsdf_per_link[mobile_links[0]]._volume.extract_point_cloud()
+			if links[0] == -1:
+				masks_per_link[l+1] = mask_l
+			else:
+				masks_per_link[l] = mask_l
+				
+		pc = tsdf_per_link[links[0]]._volume.extract_point_cloud()
 		pc = np.asarray(pc.points)
 		return depth_imgs, rgb_imgs, pc, masks_per_link, mesh_pose_dict, meshes
 

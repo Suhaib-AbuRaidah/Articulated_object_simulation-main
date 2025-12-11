@@ -100,16 +100,19 @@ def downsample_point_cloud(points, labels_list, num_points=1024):
 
     return points, new_labels_list
 
-file_paths = "/home/suhaib/Ditto/Articulated_object_simulation-main/data/Shape2Motion_gcn/robotic_arm_testing3/scenes/*.npz"
+file_paths = "/home/suhaib/Ditto/Articulated_object_simulation-main/data/Shape2Motion_gcn/testing_mix/scenes/*.npz"
 
 data_list = []
-for f in glob.glob(file_paths):
-    data = np.load(f, allow_pickle=True)
-    data_list.append(data)
+for f in sorted(glob.glob(file_paths)):
+    try:
+        data = np.load(f, allow_pickle=True)
+        data_list.append(data)
+    except Exception as e:
+        print(f"Error loading {f}: {e}")
 print(len(data_list))
 
-for i in range(len(data_list)):
-    data = data_list[i]
+for j in range(len(data_list)):
+    data = data_list[j]
     print(data.files)
 
     print(f"Joint type list: \n{data['joint_type']}\n")
@@ -125,7 +128,10 @@ for i in range(len(data_list)):
 
     masks_start = data['pc_seg_start'].item()
     masks_end = data['pc_seg_end'].item()
-    masks_start = [masks_start[i] for i in range(len(masks_start))]
+    links_index = data['links_index']
+    print(f"\n\nlinks_index: {links_index}\n\n")
+    masks_start = [masks_start[i] for i in links_index]
+    masks_end = [masks_end[i] for i in links_index]
     # pc_start, masks_start = downsample_point_cloud(pc_start, masks_start, 1000)
     colors_start = np.zeros_like(pc_start)
     np.random.seed(0)
@@ -142,6 +148,7 @@ for i in range(len(data_list)):
     )
     np.random.seed(0)
 
+    print(f"example #: {j+1}")
     mesh_start = data['mesh_start'].item()
     start_mesh = o3d.geometry.TriangleMesh()
     for key, value in mesh_start.items():
@@ -177,116 +184,12 @@ for i in range(len(data_list)):
     mesh2, densities2 = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
         pcd2, depth=9
     )
-
     o3d.visualization.draw_geometries([start_mesh, end_mesh], mesh_show_back_face=True)
-    o3d.visualization.draw_geometries([pcd1, pcd2])
+    o3d.visualization.draw_geometries([pcd1,pcd2])
 
 
 
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# for i in [22]:
-#     print(f"index:{i}")
-#     pc_start_list = []
-#     pc_end_list = []
-#     mask_start_list = []
-#     mask_end_list = []
-#     index = i
-#     file = data_list[index]
-#     print(len(file))
-#     num_joints = int((len(file)-4)/18)
-#     print(num_joints)
-#     for joint in range(num_joints):
-#         pc_start = file[f'pc_start_{joint}']
-#         pc_end = file[f'pc_end_{joint}']
-#         mask_start = file[f'pc_seg_start_{joint}']
-#         mask_end = file[f'pc_seg_end_{joint}']
-#         pc_start_list.append(pc_start)
-#         pc_end_list.append(pc_end)
-#         mask_start_list.append(mask_start)
-#         mask_end_list.append(mask_end)
-
-#     Adjacency_matrix = data_list[index]['adj']
-#     parts_conne_gt = data_list[index]['parts_conne_gt']
-#     print(Adjacency_matrix)
-#     print(parts_conne_gt)
-#     print("\n")
-#     # print(parts_conne_gt)
-#     # total_pc_list = []
-#     # for i in range(num_joints):
-#     #     pc_start = pc_start_list[i]
-#     #     mask = mask_start_list[i]
-#     #     pc_start = pc_start[mask]
-#     #     total_pc_list.append(pc_start)
-#     # pc_start = np.concatenate(total_pc_list, axis=0)
-#     pc_start = pc_start_list[0].copy()
-#     pc_end = pc_end_list[0].copy()
-#     # pc_start, mask_start_list = downsample_point_cloud(pc_start, mask_start_list, 90000)
-#     print(pc_start_list[0].shape[0])
-#     pcd_start = o3d.geometry.PointCloud()
-#     pcd_start.points = o3d.utility.Vector3dVector(pc_start)
-#     color = np.zeros_like(pc_start)
-#     # color = create_color_array_grouped(pc_start_list[0].shape[0])
-#     np.random.seed(0)
-#     for i in range(num_joints):
-#         if i==0:
-#             color[mask_start_list[i]] = np.array([1, 0, 0])
-#         elif i==1:
-#             color[mask_start_list[i]] = np.array([0, 1, 0])
-#         elif i==2:
-#             color[mask_start_list[i]] = np.array([0, 0, 1])
-#         elif i==3:
-#             color[mask_start_list[i]] = np.array([1, 1, 0])
-#         elif i==4:
-#             color[mask_start_list[i]] = np.array([1, 0, 1])
-#         elif i==5:
-#             color[mask_start_list[i]] = np.array([0, 1, 1])
-#         elif i==6:
-#             color[mask_start_list[i]] = np.array([0.5, 0.7, 1])
-#         elif i==7:
-#             color[mask_start_list[i]] = np.array([0.7, 1, 0.5])
-
-#     pcd_start.colors = o3d.utility.Vector3dVector(color)
-#     pcd_start.colors = o3d.utility.Vector3dVector(color)
-#     pcd_end = o3d.geometry.PointCloud()
-#     pcd_end.points = o3d.utility.Vector3dVector(pc_end)
-#     pivot_point_pred = np.array([0.2, 0.15, 0.2])
-#     joint_direction = np.array([1, 0, 0.1])
-#     pivot_point_pred2 = np.array([0.2, 0.16, 0.17])
-#     joint_direction2 = np.array([0, 0.05, 1])
-#     sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.002)
-#     sphere.paint_uniform_color([1, 0, 1]) 
-#     sphere.translate(np.asarray(pivot_point_pred),relative=False)
-
-#     sphere2 = o3d.geometry.TriangleMesh.create_sphere(radius=0.002)
-#     sphere2.paint_uniform_color([1, 0, 1]) 
-#     sphere2.translate(np.asarray(pivot_point_pred2),relative=False)
-
-#     arrow = create_axis_arrow(pivot_point_pred, joint_direction, length=0.07,tr=np.array([0,0,0]))
-#     arrow2 = create_axis_arrow(pivot_point_pred2, joint_direction2, length=0.07,tr=np.array([0,0,0]))
-
-#     # mesh = mesh_from_pcd(pcd_target1)
-#     o3d.visualization.draw_geometries([pcd_start, pcd_end])
-#     # o3d.visualization.draw_geometries([pcd_start, arrow, arrow2, sphere, sphere2])
 

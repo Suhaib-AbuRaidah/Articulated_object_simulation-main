@@ -254,39 +254,47 @@ def collect_observations(sim, args):
         joint_type_list.append(joint_type)
 
 
-    joints_syn = [joint_info[joint_index][1] for joint_index in all_joints]
-    joints_real = [joint_index for joint_index in all_joints]
+    links_syn = [joint_info[joint_index][1] for joint_index in all_joints]
+    links_real = [joint_index for joint_index in all_joints]
+
     if all_joints[0] != 0:
-        joints_real.insert(0, 0)  # add the base link
+        links_real.insert(0, 0)  # add the base link
     else:
-        joints_real.insert(len(joints_real), joints_real[-1]+1)  # add the base link
+        links_real.insert(0, -1)  # add the base link
+
+
+
     # print(f"joints_syn:{joints_syn}")
     # print(f"joints_real:{joints_real}")
     if args.is_syn:
-        _, _, start_pc, start_seg_label, _, start_meshes = sim.acquire_segmented_pcs(6, joints_syn)
+        _, _, start_pc, start_seg_label, _, start_meshes = sim.acquire_segmented_pcs(6, links_syn)
         # start_pc, start_seg_label = downsample_point_cloud(start_pc, start_seg_label, num_points)
-        start_p_occ, start_occ_list, start_mesh_pose_dict = sample_occ_binary(sim, joints_syn, args.num_point_occ, args.sample_method, args.occ_var)
+        # start_p_occ, start_occ_list, start_mesh_pose_dict = sample_occ_binary(sim, links_syn, args.num_point_occ, args.sample_method, args.occ_var)
 
     else:
-        _, _, start_pc, start_seg_label, _, start_meshes = sim.acquire_segmented_pcs(6, joints_real)
+        _, _, start_pc, start_seg_label, _, start_meshes = sim.acquire_segmented_pcs(6, links_real)
         # start_pc, start_seg_label = downsample_point_cloud(start_pc, start_seg_label, num_points)
         # start_p_occ, start_occ_list = sample_occ(sim, args.num_point_occ, args.sample_method, args.occ_var)
         start_p_occ, start_occ_list = None, None
 
 
+        
     for x in all_joints:
         sim.set_joint_state(x, end_state_list[x])
 
     
     if args.is_syn:
-        _, _, end_pc, end_seg_label, _, end_meshes = sim.acquire_segmented_pcs(6, joints_syn)
-        end_p_occ, end_occ_list, end_mesh_pose_dict = sample_occ_binary(sim, joints_syn, args.num_point_occ, args.sample_method, args.occ_var)
+        _, _, end_pc, end_seg_label, _, end_meshes = sim.acquire_segmented_pcs(6, links_syn)
+        # end_p_occ, end_occ_list, end_mesh_pose_dict = sample_occ_binary(sim, links_syn, args.num_point_occ, args.sample_method, args.occ_var)
     else:
-        _, _, end_pc, end_seg_label, _, end_meshes = sim.acquire_segmented_pcs(6, joints_real)
+        _, _, end_pc, end_seg_label, _, end_meshes = sim.acquire_segmented_pcs(6, links_real)
         # end_p_occ, end_occ_list = sample_occ(sim, args.num_point_occ, args.sample_method, args.occ_var)
         end_p_occ, end_occ_list = None, None
 
-
+    if links_real[0] == -1:
+        links_real.pop(0)
+        links_real.insert(len(links_real),links_real[-1]+1)
+        
     result = {
             f'pc_start': start_pc,
             f'pc_seg_start': start_seg_label,
@@ -298,7 +306,7 @@ def collect_observations(sim, args):
             f'screw_axis': axis_list,
             f'screw_moment': moment_list,
             f'joint_type': joint_type_list,
-            f'joint_index': joints_syn if args.is_syn else joints_real,
+            f'links_index': links_syn if args.is_syn else links_real,
             f'mesh_start': start_meshes,
             f'mesh_end': end_meshes,
         }
@@ -315,9 +323,14 @@ def collect_observations(sim, args):
 
     start_pc = normalize(start_pc)
     parts_pcs = []
-    for i in range(len(all_joints)+1):
-        part = start_pc[start_seg_label[i]]
-        parts_pcs.append(part)
+    if args.is_syn:
+        for i in links_syn:
+            part = start_pc[start_seg_label[i]]
+            parts_pcs.append(part)
+    else:
+        for i in range(len(links_real)):
+            part = start_pc[start_seg_label[i]]
+            parts_pcs.append(part)
 
 
     adj = build_graph_from_parts(parts_pcs, 0.05)
@@ -350,6 +363,7 @@ if __name__ == "__main__":
         args.is_syn = True
     else:
         args.is_syn = False
+    print(f"Is synthetic: {args.is_syn}")
     (args.root / "scenes").mkdir(parents=True, exist_ok=True)
     if args.num_proc > 1:
         #print(args.num_proc)
