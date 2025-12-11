@@ -32,7 +32,6 @@ class ArticulatedObjectManipulationSim(object):
 		#intrinsic = CameraIntrinsic(640, 480, 540.0, 540.0, 320.0, 240.0)
 		intrinsic = CameraIntrinsic(1280, 960, 1080.0, 1080.0, 640.0, 480.0)
 		self.camera = self.world.add_camera(intrinsic, 0.1, 2.0)
-		
 
 	def save_state(self):
 		self._snapshot_id = self.world.save_state()
@@ -131,9 +130,23 @@ class ArticulatedObjectManipulationSim(object):
 			xy = np.ones(2) * self.size / 2.0
 			z = self.size / 2 - new_bbox[:, 2].mean()
 			pose = Transform(rotation, np.r_[xy, z])
+
 		
 		self.object = self.world.load_urdf(urdf, pose, scale=scale, useFixedBase=True)
+		print(f"object: {self.object}, id: {self.object.uid}")
 		# self.wait_for_objects_to_rest(timeout=1.0)
+		
+		self.camera_vis = self.world.p.createVisualShape(
+			shapeType=self.world.p.GEOM_BOX,
+			halfExtents=[0.01, 0.01, 0.01],    # camera size
+			rgbaColor=[0, 0, 1, 1]             # blue camera
+		)
+
+		self.camera_uid = self.world.p.createMultiBody(
+			baseVisualShapeIndex=self.camera_vis,
+			basePosition=[0, 0, 0],
+			baseOrientation=[0, 0, 0, 1]
+		)
 		
 	def get_joint_info(self):
 		num_joints = self.world.p.getNumJoints(self.object.uid)
@@ -376,7 +389,10 @@ class ArticulatedObjectManipulationSim(object):
 		# Loop over all viewpoints
 		# -----------------------------
 		for extrinsic in extrinsics:
+			pos = extrinsic.translation
+			orn = extrinsic.rotation.as_quat()  # xyzw
 
+			self.world.p.resetBasePositionAndOrientation(self.camera_uid, pos, orn)
 			rgb_img, depth_img, (seg_uid, seg_link) = self.camera.render(
 				extrinsic,
 				flags=pybullet.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX
@@ -415,7 +431,7 @@ class ArticulatedObjectManipulationSim(object):
 				masks_per_link[l+1] = mask_l
 			else:
 				masks_per_link[l] = mask_l
-				
+
 		pc = tsdf_per_link[links[0]]._volume.extract_point_cloud()
 		pc = np.asarray(pc.points)
 		return depth_imgs, rgb_imgs, pc, masks_per_link, mesh_pose_dict, meshes

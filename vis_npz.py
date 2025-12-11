@@ -100,7 +100,7 @@ def downsample_point_cloud(points, labels_list, num_points=1024):
 
     return points, new_labels_list
 
-file_paths = "/home/suhaib/Ditto/Articulated_object_simulation-main/data/Shape2Motion_gcn/testing_mix/scenes/*.npz"
+file_paths = "/home/suhaib/Ditto/Articulated_object_simulation-main/data/Shape2Motion_gcn/test/cabinet/scenes/*.npz"
 
 data_list = []
 for f in sorted(glob.glob(file_paths)):
