@@ -219,20 +219,6 @@ def collect_observations(sim, args):
 
             initial_state_list[x]=(v[10])
             sim.set_joint_state(x, start_state)
-    if args.max_extent:
-        for x in all_joints:
-            v = joint_info[x]
-            if args.is_syn:
-                v = v[0]
-            lower_limit, higher_limit, range_lim = get_limit(v, args)
-            start_state = lower_limit
-            end_state = higher_limit
-            start_state_list[x]=(start_state)
-            end_state_list[x]=(end_state)
-            initial_state_list[x]=(v[10])
-            sim.set_joint_state(x, start_state)
-
-        print(sim.world.p.getAABB(0,-1))
 
     state_diff = np.array(end_state_list) - np.array(start_state_list)
 
@@ -276,14 +262,6 @@ def collect_observations(sim, args):
     else:
         links_real.insert(0, -1)  # add the base link
 
-    if args.max_extent:
-        total = 0
-        for i in range(len(links_real)):
-            max_b = np.array(sim.world.p.getAABB(sim.object.uid,i)[1])-np.array(sim.world.p.getAABB(sim.object.uid,i)[0])
-            max_dim = np.max(np.abs(max_b))
-            print(f"Max extent of part {i} at max joint extents: {max_dim}")
-            total += max_dim
-        print(f"Total max extent of object at max joint extents: {total}")
 
     # print(f"joints_syn:{joints_syn}")
     # print(f"joints_real:{joints_real}")
@@ -303,14 +281,6 @@ def collect_observations(sim, args):
     for x in all_joints:
         sim.set_joint_state(x, end_state_list[x])
 
-    if args.max_extent:
-        total = 0
-        for i in range(len(links_real)):
-            max_b = np.array(sim.world.p.getAABB(sim.object.uid,i)[1])-np.array(sim.world.p.getAABB(sim.object.uid,i)[0])
-            max_dim = np.max(np.abs(max_b))
-            print(f"Max extent of part {i} at max joint extents: {max_dim}")
-            total += max_dim
-        print(f"Total max extent of object at max joint extents: {total}")
     
     if args.is_syn:
         _, _, end_pc, end_seg_label, _, end_meshes = sim.acquire_segmented_pcs(6, links_syn)
@@ -385,7 +355,6 @@ if __name__ == "__main__":
     parser.add_argument("--rand-state", action="store_true", help='set static joints at random state')
     parser.add_argument("--global-scaling", type=float, default=0.5)
     parser.add_argument("--dense-photo", action="store_true")
-    parser.add_argument("--max-extent", action="store_true", default=False)
 
 
     args = parser.parse_args()

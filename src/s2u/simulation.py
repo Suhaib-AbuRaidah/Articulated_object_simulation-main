@@ -136,17 +136,17 @@ class ArticulatedObjectManipulationSim(object):
 		print(f"object: {self.object}, id: {self.object.uid}")
 		# self.wait_for_objects_to_rest(timeout=1.0)
 		
-		self.camera_vis = self.world.p.createVisualShape(
-			shapeType=self.world.p.GEOM_BOX,
-			halfExtents=[0.01, 0.01, 0.01],    # camera size
-			rgbaColor=[0, 0, 1, 1]             # blue camera
-		)
+		# self.camera_vis = self.world.p.createVisualShape(
+		# 	shapeType=self.world.p.GEOM_BOX,
+		# 	halfExtents=[0.01, 0.01, 0.01],    # camera size
+		# 	rgbaColor=[0, 0, 1, 1]             # blue camera
+		# )
 
-		self.camera_uid = self.world.p.createMultiBody(
-			baseVisualShapeIndex=self.camera_vis,
-			basePosition=[0, 0, 0],
-			baseOrientation=[0, 0, 0, 1]
-		)
+		# self.camera_uid = self.world.p.createMultiBody(
+		# 	baseVisualShapeIndex=self.camera_vis,
+		# 	basePosition=[0, 0, 0],
+		# 	baseOrientation=[0, 0, 0, 1]
+		# )
 		
 	def get_joint_info(self):
 		num_joints = self.world.p.getNumJoints(self.object.uid)
@@ -392,7 +392,7 @@ class ArticulatedObjectManipulationSim(object):
 			pos = extrinsic.translation
 			orn = extrinsic.rotation.as_quat()  # xyzw
 
-			self.world.p.resetBasePositionAndOrientation(self.camera_uid, pos, orn)
+			# self.world.p.resetBasePositionAndOrientation(self.camera_uid, pos, orn)
 			rgb_img, depth_img, (seg_uid, seg_link) = self.camera.render(
 				extrinsic,
 				flags=pybullet.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX
