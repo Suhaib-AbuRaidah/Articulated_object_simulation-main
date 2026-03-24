@@ -151,12 +151,10 @@ def main(args, rank):
     if rank == 0:
         print(f'Number of objects: {len(sim.object_urdfs)}')
     
-    for _ in range(scenes_per_worker):
+    for i in range(scenes_per_worker):
         
         sim.reset(canonical=args.canonical)
         object_path = str(sim.object_urdfs[sim.object_idx])
-        
-        
         result = collect_observations(
             sim, args)
         result['object_path'] = object_path
@@ -194,15 +192,15 @@ def collect_observations(sim, args):
         joint_info = sim.get_joint_info_w_sub()
     else:
         joint_info = sim.get_joint_info()
+
     all_joints = list(joint_info.keys())
     # if all_joints[0] == 0:
     #     all_joints = [x+1 for x in all_joints]
-    
     max_joint = max(all_joints) + 1
     start_state_list = [0.0] * max_joint
     end_state_list = [0.0] * max_joint
     initial_state_list = [0.0] * max_joint
-    if args.rand_state:
+    if args.rand_state:          
         for x in all_joints:
             v = joint_info[x]
             if args.is_syn:
@@ -220,7 +218,9 @@ def collect_observations(sim, args):
             initial_state_list[x]=(v[10])
             sim.set_joint_state(x, start_state)
 
-    state_diff = np.array(end_state_list) - np.array(start_state_list)
+
+    
+
 
     # joint_index = all_joints.pop(np.random.randint(len(all_joints)))
     for index in all_joints:
@@ -289,6 +289,12 @@ def collect_observations(sim, args):
         _, _, end_pc, end_seg_label, _, end_meshes = sim.acquire_segmented_pcs(6, links_real)
         # end_p_occ, end_occ_list = sample_occ(sim, args.num_point_occ, args.sample_method, args.occ_var)
         end_p_occ, end_occ_list = None, None
+
+    if all_joints[0] == 0:
+        start_state_list.insert(0, 0.0)
+        end_state_list.insert(0, 0.0)
+
+    state_diff = np.array(end_state_list) - np.array(start_state_list)
 
     if links_real[0] == -1:
         links_real.pop(0)

@@ -67,7 +67,6 @@ class ArticulatedObjectManipulationSim(object):
 							d_tmp = json.load(f)
 						self.object_bbox.append(np.array((d_tmp['min'], d_tmp['max'])))
 				
-
 	def reset(self, index=None, canonical=False):
 		self.world.reset()
 		self.world.set_gravity([0.0, 0.0, -9.81])
@@ -133,7 +132,6 @@ class ArticulatedObjectManipulationSim(object):
 
 		
 		self.object = self.world.load_urdf(urdf, pose, scale=scale, useFixedBase=True)
-		print(f"object: {self.object}, id: {self.object.uid}")
 		# self.wait_for_objects_to_rest(timeout=1.0)
 		
 		# self.camera_vis = self.world.p.createVisualShape(
