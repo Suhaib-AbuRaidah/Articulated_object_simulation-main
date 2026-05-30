@@ -1,0 +1,11 @@
+{
+  "articulated_objects": {
+    "root": "/home/suhaib/Ditto/Articulated_object_simulation-main/scripts/data/vlm_articulated/images",
+    "annotation": "/home/suhaib/Ditto/Articulated_object_simulation-main/scripts/data/vlm_articulated/train.jsonl",
+    "data_augment": false,
+    "segmented": false,
+    "max_dynamic_patch": 12,
+    "repeat_time": 1,
+    "length": 6
+  }
+}

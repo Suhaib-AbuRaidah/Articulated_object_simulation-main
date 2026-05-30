@@ -191,6 +191,7 @@ class ArticulatedObjectManipulationSim(object):
 			parent_link_state = self.world.p.getBasePositionAndOrientation(self.object.uid)
 		else:
 			parent_link_state = self.world.p.getLinkState(self.object.uid, parent_index)
+			# parent_link_state = self.world.p.getLinkState(self.object.uid, parent_index,computeForwardKinematics=True)
 		parent_link_trans = get_transform(parent_link_state[0], parent_link_state[1])
 		relative_trans = get_transform(joint_pos_parent, joint_ori_parent)
 		axis_trans = parent_link_trans * relative_trans
@@ -199,7 +200,39 @@ class ArticulatedObjectManipulationSim(object):
 		point_on_axis = axis_trans.translation
 		moment = np.cross(point_on_axis, axis_global)
 		return axis_global, moment
-		
+
+	def get_joint_screw1(self, joint_index,prev_joint_axis=None):
+		joint_info_dict = self.get_joint_info()
+		v = joint_info_dict[joint_index]
+		joint_type = v[2]
+		joint_axis = v[-4]
+		joint_pos_parent = v[-3]
+		joint_ori_parent = v[-2]
+		parent_index = v[-1]
+		if parent_index == -1: # baselink
+			parent_link_state = self.world.p.getBasePositionAndOrientation(self.object.uid)
+		else:
+			parent_link_state = self.world.p.getLinkState(self.object.uid, parent_index)
+			# parent_link_state = self.world.p.getLinkState(self.object.uid, parent_index,computeForwardKinematics=True)
+		parent_link_trans = get_transform(parent_link_state[0], parent_link_state[1])
+		relative_trans = get_transform(joint_pos_parent, joint_ori_parent)
+		axis_trans = parent_link_trans * relative_trans
+		axis_global = axis_trans.rotation.as_matrix().dot(joint_axis)
+		# print("joint index:", joint_index)
+		# print(f"joint ori parent:\n{joint_ori_parent}")
+		# print(f"parent link trans:\n{parent_link_trans.rotation.as_matrix()}")
+		# print(f"relative trans:\n{relative_trans.rotation.as_matrix()}")
+		# print(f"axis trans:\n{axis_trans.rotation.as_matrix()}")
+		# print(f"axis global before normalization:\n{axis_global}")
+		# axis_global /= np.sqrt(np.sum(axis_global ** 2))
+		point_on_axis = axis_trans.translation
+		moment = np.cross(point_on_axis, axis_global)
+		if prev_joint_axis is not None:
+			previous_axis = parent_link_trans.rotation.as_matrix()[:3,:3]@prev_joint_axis
+		else:
+			previous_axis = None
+		return axis_global, moment, previous_axis
+	
 	def get_joint_state(self, joint_index):
 		return self.world.p.getJointState(self.object.uid, joint_index)
 
@@ -347,7 +380,7 @@ class ArticulatedObjectManipulationSim(object):
 		# Create one TSDF per link
 		tsdf_per_link = {
 			l: TSDFVolume(
-				self.size, 192,
+				self.size, 196,
 				color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8
 			)
 			for l in links

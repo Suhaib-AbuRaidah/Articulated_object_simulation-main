@@ -8,6 +8,8 @@ import multiprocessing as mp
 
 from tqdm import tqdm
 import numpy as np
+from scipy.spatial.distance import cdist
+from collections import OrderedDict
 
 from s2u.simulation import ArticulatedObjectManipulationSim
 from s2u.utils.axis2transform import axis2transformation
@@ -16,73 +18,34 @@ from s2u.utils.visual import as_mesh
 from s2u.utils.implicit import sample_iou_points_occ
 from s2u.utils.io import write_data
 
+def normalize(points):
+    bound_max = points.max(0)
+    bound_min = points.min(0)
+    center = (bound_max+bound_min)/2
+    scale = bound_max-bound_min
+    return (points-center)/scale
 
-def binary_occ(occ_list, idx):
-    occ_fore = occ_list.pop(idx)
-    occ_back = np.zeros_like(occ_fore)
-    for o in occ_list:
-        occ_back += o
-    return occ_fore, occ_back
+def downsample_point_cloud(points, labels=None, num_points=1024):
+    """
+    Randomly downsample the point cloud to a fixed size.
+    """
+    N = points.shape[0]
+    if N >= num_points:
+        np.random.seed(97)
+        indices = np.random.choice(N, num_points, replace=False)
+    else:
+        np.random.seed(97)
+        indices = np.random.choice(N, num_points, replace=True)  # pad if too small
+    if labels is not None:
+        labels = labels[indices]
+        return points[indices], labels
+    else:
+        return points[indices]
 
 
-def sample_occ(sim, num_point, method, var=0.005):
-    result_dict = get_mesh_pose_dict_from_world(sim.world, False)
-    obj_name = str(sim.object_urdfs[sim.object_idx])
-    obj_name = '/'.join(obj_name.split('/')[-4:-1])
-    mesh_dict = {}
-    whole_scene = trimesh.Scene()
-    for k, v in result_dict.items():
-        scene = trimesh.Scene()
-        for mesh_path, scale, pose in v:
-            mesh = trimesh.load(mesh_path)
-            mesh.apply_scale(scale)
-            mesh.apply_transform(pose)
-            scene.add_geometry(mesh)
-            whole_scene.add_geometry(mesh)
-        mesh_dict[k] = as_mesh(scene)
-    points_occ, occ_list = sample_iou_points_occ(mesh_dict.values(),
-                                                      whole_scene.bounds,
-                                                      num_point,
-                                                      method,
-                                                      var=var)
-    return points_occ, occ_list
-
-def sample_occ_binary(sim, mobile_links, num_point, method, var=0.005):
-    result_dict = get_mesh_pose_dict_from_world(sim.world, False)
-    new_dict = {'0_0': [], '0_1': []}
-    obj_name = str(sim.object_urdfs[sim.object_idx])
-    obj_name = '/'.join(obj_name.split('/')[-4:-1])
-    whole_scene = trimesh.Scene()
-    static_scene = trimesh.Scene()
-    mobile_scene = trimesh.Scene()
-    for k, v in result_dict.items():
-        body_uid, link_index = k.split('_')
-        link_index = int(link_index)
-        if link_index in mobile_links:
-            new_dict['0_1'] += v
-        else:
-            new_dict['0_0'] += v
-        for mesh_path, scale, pose in v:
-            if mesh_path.startswith('#'): # primitive
-                mesh = trimesh.creation.box(extents=scale, transform=pose)
-            else:
-                mesh = trimesh.load(mesh_path)
-                mesh.apply_scale(scale)
-                mesh.apply_transform(pose)
-            if link_index in mobile_links:
-                mobile_scene.add_geometry(mesh)
-            else:
-                static_scene.add_geometry(mesh)
-            whole_scene.add_geometry(mesh)
-    static_mesh = as_mesh(static_scene)
-    mobile_mesh = as_mesh(mobile_scene)
-    points_occ, occ_list = sample_iou_points_occ((static_mesh, mobile_mesh),
-                                                      whole_scene.bounds,
-                                                      num_point,
-                                                      method,
-                                                      var=var)
-    return points_occ, occ_list, new_dict
-
+def smoothstep(t):
+    # cubic smooth interpolation, t in [0, 1]
+    return 3.0 * t**2 - 2.0 * t**3
 
 def main(args, rank):
     
@@ -100,24 +63,20 @@ def main(args, rank):
     if rank == 0:
         print(f'Number of objects: {len(sim.object_urdfs)}')
     
-    for _ in range(scenes_per_worker):
+    for i in range(scenes_per_worker):
         
         sim.reset(canonical=args.canonical)
         object_path = str(sim.object_urdfs[sim.object_idx])
-        
-        
         result = collect_observations(
             sim, args)
-        
         result['object_path'] = object_path
-        
+        # print(result.keys())
         write_data(args.root, result)
         
         pbar.update()
     
     pbar.close()
     print('Process %d finished!' % rank)
-
 
 def get_limit(v, args):
     joint_type = v[2]
@@ -137,107 +96,159 @@ def get_limit(v, args):
         range_lim = higher_limit - lower_limit
     return lower_limit, higher_limit, range_lim
 
+def sample_joint_configuration(all_joints, joint_info, args):
+    max_joint = max(all_joints) + 1
+    q = [0.0] * max_joint
+
+    for j in all_joints:
+        v = joint_info[j]
+        if args.is_syn:
+            v = v[0]
+
+        lower_limit, higher_limit, _ = get_limit(v, args)
+
+        # reset to nominal/initial state first
+        sim_init = v[10]
+
+        # if limits are invalid or too tight, just keep nominal state
+        if higher_limit <= lower_limit:
+            q[j] = sim_init
+        else:
+            q[j] = np.random.uniform(lower_limit, higher_limit)
+
+    return q
+
+
 def collect_observations(sim, args):
+    # print(str(sim.object_urdfs[sim.object_idx]))
     if args.is_syn:
         joint_info = sim.get_joint_info_w_sub()
     else:
         joint_info = sim.get_joint_info()
-    print(joint_info)
-    all_joints = list(joint_info.keys())
-    print(all_joints)
-    joint_index = all_joints.pop(np.random.randint(len(all_joints)))
 
-    if args.rand_state:
-        for x in all_joints:
-            v = joint_info[x]
+    all_joints = list(joint_info.keys())
+    max_joint = max(all_joints) + 1
+
+    # number of frames in the smooth trajectory
+    num_frames = 4
+
+    # base link handling exactly as in your original code
+    links_real = [joint_index for joint_index in all_joints]
+    if all_joints[0] != 0:
+        links_real.insert(0, 0)   # add the base link
+    else:
+        links_real.insert(0, -1)  # add the base link
+
+    # ---------- sample smooth start/end configurations ----------
+    q_start = [0.0] * max_joint
+    q_end = [0.0] * max_joint
+
+    for j in all_joints:
+        v = joint_info[j]
+        # print("joint id:", j)
+        # print("parent index:", v[-1])
+        # print("joint axis:", v[-4])
+        # print("parent frame pos:", v[-3])
+        # print("parent frame orn:", v[-2])
+        if args.is_syn:
+            v = v[0]
+
+        lower_limit, higher_limit, _ = get_limit(v, args)
+        init_state = v[10]
+
+        # reset first
+        sim.set_joint_state(j, init_state)
+
+        if args.rand_state and higher_limit > lower_limit:
+            q_start[j] = np.random.uniform(lower_limit, higher_limit)
+            q_end[j] = np.random.uniform(lower_limit, higher_limit)
+        else:
+            q_start[j] = init_state
+            q_end[j] = init_state
+
+    # ---------- collect sequence ----------
+    poses_pcs = []
+    poses_seg = []
+    joint_states = []
+    axis_list = []
+    moment_list = []
+    joint_type_list = []
+
+    num_points = 0
+
+    for frame_idx in range(num_frames):
+        if num_frames == 1:
+            tau = 0.0
+        else:
+            tau = frame_idx / (num_frames - 1)
+
+        s = smoothstep(tau)
+
+        # interpolate all joints smoothly
+        q_t = [0.0] * max_joint
+        for j in all_joints:
+            q_t[j] = q_start[j] + s * (q_end[j] - q_start[j])
+            sim.set_joint_state(j, q_t[j])
+
+        # capture observation
+        _, _, pc, seg_label, _, _ = sim.acquire_segmented_pcs(6, links_real)
+
+        if pc.shape[0] > num_points:
+            num_points = pc.shape[0]
+
+        poses_pcs.append(pc)
+        poses_seg.append(seg_label)
+        joint_states.append(q_t.copy())
+
+        # store screw info for all joints at this frame
+        frame_axes = {}
+        frame_moments = {}
+        frame_joint_types = {}
+        for j in all_joints:
+            if j >1:
+                axis, moment, previous_axis = sim.get_joint_screw1(j,joint_info[j-1][-4])
+                if np.dot(frame_axes[j-1], previous_axis) < -0.5:
+                    frame_axes[j-1] = -frame_axes[j-1]
+                    frame_moments[j-1] = -frame_moments[j-1]
+            else:
+                axis, moment = sim.get_joint_screw(j)
+            v = joint_info[j]
             if args.is_syn:
                 v = v[0]
-            lower_limit, higher_limit, range_lim = get_limit(v, args)
-            start_state = np.random.uniform(lower_limit, higher_limit)
-            sim.set_joint_state(x, start_state)
+            joint_type = v[2]
 
-    v = joint_info[joint_index]
-    if args.is_syn:
-        v = v[0]
-    axis, moment = sim.get_joint_screw(joint_index)
-    joint_type = v[2]
-    # not set
-    lower_limit, higher_limit, range_lim = get_limit(v, args)
+            frame_axes[j] = axis
+            frame_moments[j] = moment
+            frame_joint_types[j] = joint_type
 
-    move_range = np.random.uniform(range_lim * args.range_scale, range_lim)
-    start_state = np.random.uniform(lower_limit, higher_limit - move_range)
-    end_state = start_state + move_range
-    if np.random.uniform(0, 1) > 0.5:
-        start_state, end_state = end_state, start_state
-    
-    sim.set_joint_state(joint_index, start_state)
-    
-    if args.is_syn:
-        _, _, start_pc, start_seg_label, start_mesh_pose_dict = sim.acquire_segmented_pc(6, joint_info[joint_index][1])
-        start_p_occ, start_occ_list, start_mesh_pose_dict = sample_occ_binary(sim, joint_info[joint_index][1], args.num_point_occ, args.sample_method, args.occ_var)
-    else:
-        _, _, start_pc, start_seg_label, start_mesh_pose_dict = sim.acquire_segmented_pc(6, [joint_index])
-        start_p_occ, start_occ_list = sample_occ(sim, args.num_point_occ, args.sample_method, args.occ_var)
-    # canonicalize start pc
-    axis, moment = sim.get_joint_screw(joint_index)
-    state_change = end_state - start_state
-    if joint_type == 0:
-        transformation = axis2transformation(axis, np.cross(axis, moment), state_change)
-    else:
-        transformation = np.eye(4)
-        transformation[:3, 3] = axis * state_change
-    
-    mobile_start_pc = start_pc[start_seg_label].copy()
-    rotated = transformation[:3, :3].dot(mobile_start_pc.T) + transformation[:3, [3]]
-    rotated = rotated.T
-    canonical_start_pc = start_pc.copy()
-    canonical_start_pc[start_seg_label] = rotated
+        axis_list.append(frame_axes)
+        moment_list.append(frame_moments)
+        joint_type_list.append(frame_joint_types)
 
-    sim.set_joint_state(joint_index, end_state)
+    # ---------- make all point clouds/segmentations same size ----------
+    for i, (pc, labels) in enumerate(zip(poses_pcs, poses_seg)):
+        poses_pcs[i] = downsample_point_cloud(pc, num_points=num_points)
+        for key in labels.keys():
+            poses_seg[i][key] = downsample_point_cloud(labels[key], num_points=num_points)
     
-    if args.is_syn:
-        _, _, end_pc, end_seg_label, end_mesh_pose_dict = sim.acquire_segmented_pc(6, joint_info[joint_index][1])
-        end_p_occ, end_occ_list, end_mesh_pose_dict = sample_occ_binary(sim, joint_info[joint_index][1], args.num_point_occ, args.sample_method, args.occ_var)
-    else:
-        _, _, end_pc, end_seg_label, end_mesh_pose_dict = sim.acquire_segmented_pc(6, [joint_index])
-        end_p_occ, end_occ_list = sample_occ(sim, args.num_point_occ, args.sample_method, args.occ_var)
-    # canonicalize end pc
-    axis, moment = sim.get_joint_screw(joint_index)
-    state_change = start_state - end_state
-    if joint_type == 0:
-        transformation = axis2transformation(axis, np.cross(axis, moment), state_change)
-    else:
-        transformation = np.eye(4)
-        transformation[:3, 3] = axis * state_change
-    mobile_end_pc = end_pc[end_seg_label].copy()
-    rotated = transformation[:3, :3].dot(mobile_end_pc.T) + transformation[:3, [3]]
-    rotated = rotated.T
-    canonical_end_pc = end_pc.copy()
-    canonical_end_pc[end_seg_label] = rotated
-
+    state0 = joint_states[0]
+    # print(f"Joint states abs:\n{joint_states}")
+    joint_states_rel = np.asarray(joint_states) - np.array(state0)
+    # print(f"Joint states relative:\n{joint_states_rel}")
     result = {
-            'pc_start': start_pc,
-            'pc_start_end': canonical_start_pc,
-            'pc_seg_start': start_seg_label,
-            'pc_end': end_pc,
-            'pc_end_start': canonical_end_pc,
-            'pc_seg_end': end_seg_label,
-            'state_start': start_state,
-            'state_end': end_state,
-            'screw_axis': axis,
-            'screw_moment': moment,
-            'joint_type': joint_type,
-            'joint_index': 1 if args.is_syn else joint_index,
-            'start_p_occ': start_p_occ, 
-            'start_occ_list': start_occ_list, 
-            'end_p_occ': end_p_occ, 
-            'end_occ_list': end_occ_list,
-            'start_mesh_pose_dict': start_mesh_pose_dict,
-            'end_mesh_pose_dict': end_mesh_pose_dict
-        }
+        'poses_pcs': poses_pcs,                 # list of point clouds over time
+        'poses_seg': poses_seg,                 # list of segmentation dicts over time
+        'joint_states': joint_states,           # full joint vector at each frame
+        'joint_states_rel': joint_states_rel,   # relative joint states
+        'axes': axis_list,                      # list of dicts: frame -> joint -> axis
+        'screw_moments': moment_list,           # list of dicts: frame -> joint -> moment
+        'joints_type': joint_type_list,         # list of dicts: frame -> joint -> type
+        # 'q_start': q_start,
+        # 'q_end': q_end,
+        # 'joint_ids': all_joints,
+    }
 
     return result
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -262,6 +273,7 @@ if __name__ == "__main__":
         args.is_syn = True
     else:
         args.is_syn = False
+    print(f"Is synthetic: {args.is_syn}")
     (args.root / "scenes").mkdir(parents=True, exist_ok=True)
     if args.num_proc > 1:
         #print(args.num_proc)

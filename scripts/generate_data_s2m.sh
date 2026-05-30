@@ -24,3 +24,14 @@ python scripts/generate_data_seg.py --object-set syn/microwave/train data/syn_lo
 python scripts/generate_data_seg1.py --object-set Shape2Motion/cabinet/eval data/Shape2Motion_local/cabinet_eval --num-scenes 5 --pos-rot 1 --global-scaling 0.6 --num-proc 1 --sample-method mix --dense-photo --sim-gui --rand-state
 python scripts/generate_data_seg1.py --object-set Shape2Motion/cabinet/eval data/Shape2Motion_local/cabinet_eval --num-scenes 5 --pos-rot 1 --global-scaling 0.6 --num-proc 1 --sample-method mix --dense-photo --sim-gui --rand-state
 python scripts/generate_data_seg5.py --object-set Shape2Motion/robotic_arm/ data/Shape2Motion_gcn/robotic_arm_testing --num-scenes 1 --pos-rot 1 --global-scaling 1 --num-proc 1 --sample-method mix --dense-photo --sim-gui --rand-state
+python scripts/generate_data_seg.py --object-set Shape2Motion/robotic_arm/ data/Shape2Motion_coupled/robotic_arm3 --num-scenes 1 --pos-rot 1 --global-scaling 0.8 --num-proc 1 --sample-method mix --dense-photo --rand-state
+
+python dataset_generation.py data/vlm_articulated \
+  --object-set Shape2Motion/robotic_arm \
+  --num-scenes 40 \
+  --num-views 6 \
+  --pos-rot 1 \
+  --rand-state \
+  --pos-rot 1 \
+  --global-scaling 0.9 \
+  --num-proc 2
