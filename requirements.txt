@@ -6,6 +6,7 @@ pybullet==2.7.9
 tqdm
 catkin_pkg
 trimesh
+torch
 urdfpy
 cython
 treelib

@@ -1,8 +1,11 @@
+import os
 import trimesh
 import argparse
 from pathlib import Path
-
+import sys
+sys.path.append(os.path.expanduser("~/Articulated_object_simulation-main/src/"))
 import numpy as np
+import torch
 from tqdm import tqdm
 import multiprocessing as mp
 
@@ -17,6 +20,7 @@ from s2u.utils.saver import get_mesh_pose_dict_from_world
 from s2u.utils.visual import as_mesh
 from s2u.utils.implicit import sample_iou_points_occ
 from s2u.utils.io import write_data
+from s2u.canonical_cf import estimate_normals_knn, optimize_canonical_frame
 
 def normalize(points):
     bound_max = points.max(0)
@@ -42,10 +46,70 @@ def downsample_point_cloud(points, labels=None, num_points=1024):
     else:
         return points[indices]
 
+def calculate_canonical_frames(points, part_masks):
+    """Calculate a world-space canonical frame for each segmented part."""
+    canonical_frames = {}
+    for part_id, mask in part_masks.items():
+        mask = np.asarray(mask, dtype=bool)
+        if mask.shape[0] != points.shape[0]:
+            raise ValueError(
+                f"Part {part_id} mask has {mask.shape[0]} entries for "
+                f"{points.shape[0]} points")
+
+        part_points = np.asarray(points[mask], dtype=np.float32)
+        if part_points.shape[0] < 3:
+            canonical_frames[part_id] = {
+                'status': 'insufficient_points',
+                'num_points': part_points.shape[0],
+            }
+            continue
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        part_points_tensor = torch.from_numpy(part_points).to(device)
+        normal_k = min(24, part_points.shape[0] - 1)
+        part_normals = estimate_normals_knn(part_points_tensor, k=normal_k)
+        frame = optimize_canonical_frame(
+            part_points_tensor,
+            normals=part_normals,
+            alpha=0.5,
+            beta=2.0,
+            restarts=1,
+            steps=250,
+            random_rotation_degrees=20.0,
+        )
+        canonical_frames[part_id] = {
+            'status': 'ok',
+            'num_points': part_points.shape[0],
+            'center': frame.center.detach().cpu().numpy(),
+            'axes': frame.axes.detach().cpu().numpy(),
+            'scale': float(frame.scale.detach().cpu()),
+            'energy': frame.energy,
+            'info': frame.info,
+        }
+    return canonical_frames
+
 
 def smoothstep(t):
     # cubic smooth interpolation, t in [0, 1]
     return 3.0 * t**2 - 2.0 * t**3
+
+def sample_joint_trajectory_end(q_start, lower_limit, higher_limit):
+    joint_range = higher_limit - lower_limit
+    min_delta_ratio = np.random.choice([0.15, 0.4], p=[0.2, 0.8])
+    min_delta = min_delta_ratio * joint_range
+    max_delta = 0.9 * joint_range
+
+    valid_delta_ranges = []
+    if q_start + min_delta <= higher_limit:
+        valid_delta_ranges.append(
+            (min_delta, min(max_delta, higher_limit - q_start)))
+    if q_start - min_delta >= lower_limit:
+        valid_delta_ranges.append(
+            (-min(max_delta, q_start - lower_limit), -min_delta))
+
+    delta_min, delta_max = valid_delta_ranges[
+        np.random.randint(len(valid_delta_ranges))]
+    return q_start + np.random.uniform(delta_min, delta_max)
 
 def main(args, rank):
     
@@ -130,7 +194,7 @@ def collect_observations(sim, args):
     max_joint = max(all_joints) + 1
 
     # number of frames in the smooth trajectory
-    num_frames = 4
+    num_frames = 2
 
     # base link handling exactly as in your original code
     links_real = [joint_index for joint_index in all_joints]
@@ -161,7 +225,8 @@ def collect_observations(sim, args):
 
         if args.rand_state and higher_limit > lower_limit:
             q_start[j] = np.random.uniform(lower_limit, higher_limit)
-            q_end[j] = np.random.uniform(lower_limit, higher_limit)
+            q_end[j] = sample_joint_trajectory_end(
+                q_start[j], lower_limit, higher_limit)
         else:
             q_start[j] = init_state
             q_end[j] = init_state
@@ -173,6 +238,7 @@ def collect_observations(sim, args):
     axis_list = []
     moment_list = []
     joint_type_list = []
+    canonical_frames_lst = []
 
     num_points = 0
 
@@ -205,7 +271,7 @@ def collect_observations(sim, args):
         frame_moments = {}
         frame_joint_types = {}
         for j in all_joints:
-            if j >1:
+            if j >1 and not args.is_syn:
                 axis, moment, previous_axis = sim.get_joint_screw1(j,joint_info[j-1][-4])
                 if np.dot(frame_axes[j-1], previous_axis) < -0.5:
                     frame_axes[j-1] = -frame_axes[j-1]
@@ -225,12 +291,16 @@ def collect_observations(sim, args):
         moment_list.append(frame_moments)
         joint_type_list.append(frame_joint_types)
 
+        # Canonical frames describe each part in the world coordinates of frame 0.
+        canonical_frames = calculate_canonical_frames(poses_pcs[frame_idx], poses_seg[frame_idx])
+        canonical_frames_lst.append(canonical_frames)
+
     # ---------- make all point clouds/segmentations same size ----------
     for i, (pc, labels) in enumerate(zip(poses_pcs, poses_seg)):
         poses_pcs[i] = downsample_point_cloud(pc, num_points=num_points)
         for key in labels.keys():
             poses_seg[i][key] = downsample_point_cloud(labels[key], num_points=num_points)
-    
+
     state0 = joint_states[0]
     # print(f"Joint states abs:\n{joint_states}")
     joint_states_rel = np.asarray(joint_states) - np.array(state0)
@@ -243,6 +313,7 @@ def collect_observations(sim, args):
         'axes': axis_list,                      # list of dicts: frame -> joint -> axis
         'screw_moments': moment_list,           # list of dicts: frame -> joint -> moment
         'joints_type': joint_type_list,         # list of dicts: frame -> joint -> type
+        'canonical_frames': canonical_frames_lst,   # list of dicts: frame -> part -> canonical frame at frame 0
         # 'q_start': q_start,
         # 'q_end': q_end,
         # 'joint_ids': all_joints,
