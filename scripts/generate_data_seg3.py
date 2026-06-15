@@ -343,8 +343,8 @@ def collect_observations(sim, args):
             f'screw_moment': moment_list,
             f'joint_type': joint_type_list,
             f'links_index': links_syn if args.is_syn else links_real,
-            # f'mesh_start': start_meshes,
-            # f'mesh_end': end_meshes,
+            f'mesh_start': start_meshes,
+            f'mesh_end': end_meshes,
         }
 
 

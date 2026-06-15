@@ -314,9 +314,9 @@ def collect_observations(sim, args):
         'screw_moments': moment_list,           # list of dicts: frame -> joint -> moment
         'joints_type': joint_type_list,         # list of dicts: frame -> joint -> type
         'canonical_frames': canonical_frames_lst,   # list of dicts: frame -> part -> canonical frame at frame 0
-        # 'q_start': q_start,
-        # 'q_end': q_end,
-        # 'joint_ids': all_joints,
+        'q_start': q_start,
+        'q_end': q_end,
+        'joint_ids': all_joints,
     }
 
     return result
