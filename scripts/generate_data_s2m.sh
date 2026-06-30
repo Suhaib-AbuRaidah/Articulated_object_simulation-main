@@ -32,9 +32,26 @@ python scripts/generate_particulate_pointcloud_data.py data/serial_train \
   --num-scenes 10 \
   --num-proc 1 \
   --num-points 20000 \
+  --rand-state
+
+python scripts/generate_particulate_pointcloud_nocs_data.py data/serial_canonical_max4 \
+  --object-set robotic_arm_masked \
+  --num-scenes 10 \
+  --num-proc 1 \
+  --num-points 8000 \
   --rand-state \
-  --save-ply
-  
+  --max-parts 4 \
+  --max-moving-joints 3
+
+python scripts/generate_particulate_pointcloud_nocs_world_aligned_data.py data/serial_canonical_aligned_max4 \
+  --object-set robotic_arm \
+  --num-scenes 20 \
+  --num-proc 1 \
+  --num-points 8000 \
+  --rand-state \
+  --max-parts 4 \
+  --max-moving-joints 3
+
 python dataset_generation.py data/vlm_articulated \
   --object-set Shape2Motion/robotic_arm \
   --num-scenes 40 \
@@ -44,3 +61,28 @@ python dataset_generation.py data/vlm_articulated \
   --pos-rot 1 \
   --global-scaling 0.9 \
   --num-proc 2
+
+# Create folders and move files for each selected category
+for category in \
+    "articulated_task_lamp" \
+    "xyz_cartesian_stage" \
+    "robotic_arms" \
+    "serial_elbow_arm" \
+    "folding_arm_chain" \
+    "extension_ladder" \
+    "studio_spotlight_on_yoke" \
+    "twostage_telescoping_slide" \
+    "cctv_mast_with_pantilt_camera_head" \
+    "astronomical_telescope_on_tripod" \
+    "orthogonal_xy_stage" \
+    "threestage_telescoping_slide" \
+    "cantilever_articulated_arm" \
+    "desktop_monitor_with_tilt_swivel_stand" \
+    "laptop_stand_with_articulated_height_adjustment" \
+    "tv_wall_mount" \
+    "monitor_mount"; do
+    mkdir -p "$category"
+    find . -maxdepth 1 -type f -name "rec_${category}_*.tar.gz" -exec mv {} "$category"/ \;
+    echo "$(ls $category | wc -l) files moved to $category/"
+done
+

@@ -388,6 +388,7 @@ def sample_joint_states(
             state = float(rng.uniform(lower, upper))
         else:
             state = initial_state
+            state = 0.0
         sim.set_joint_state(joint_id, state)
         states[joint_id] = state
     return states
@@ -1176,6 +1177,11 @@ def parse_args() -> argparse.Namespace:
         help="Allow branching kinematic trees instead of requiring a serial chain",
     )
     parser.add_argument("--save-ply", action="store_true")
+    parser.add_argument(
+        "--save-mesh",
+        action="store_true",
+        help="Store per-part mesh vertices and faces in the output NPZ",
+    )
     parser.add_argument("--axis-visual-length", type=float, default=0.75)
     parser.add_argument("--axis-visual-samples", type=int, default=160)
     parser.add_argument("--max-attempts-per-sample", type=int, default=10)

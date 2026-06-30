@@ -1,0 +1,10 @@
+samples/00000000.npz
+samples/00000001.npz
+samples/00000002.npz
+samples/00000003.npz
+samples/00000004.npz
+samples/00000005.npz
+samples/00000006.npz
+samples/00000007.npz
+samples/00000008.npz
+samples/00000009.npz
