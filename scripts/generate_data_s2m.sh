@@ -34,15 +34,23 @@ python scripts/generate_particulate_pointcloud_data.py data/serial_train \
   --num-points 20000 \
   --rand-state
 
-python scripts/generate_particulate_pointcloud_nocs_data.py data/serial_canonical_max4 \
-  --object-set robotic_arm_masked \
-  --num-scenes 10 \
+python scripts/generate_particulate_pointcloud_nocs_data.py data/dataset/robotic_arm \
+  --object-set robotic_arm \
+  --num-scenes 100 \
   --num-proc 1 \
   --num-points 8000 \
   --rand-state \
+  --sample-points
   --max-parts 4 \
   --max-moving-joints 3
 
+python scripts/generate_particulate_pointcloud_nocs_data.py data/dataset/articulated_lamp/train \
+ --articraft-root "~/Articulated_object_simulation-main/data/urdfs/Canonical1" \
+ --category articulated_task_lamp \
+ --num-scenes 20 \
+ --num-points 4096
+
+articulated_task_lamp/sub_categories/articulated_task_lamp/fit/train
 python scripts/generate_particulate_pointcloud_nocs_world_aligned_data.py data/serial_canonical_aligned_max4 \
   --object-set robotic_arm \
   --num-scenes 20 \
@@ -86,3 +94,11 @@ for category in \
     echo "$(ls $category | wc -l) files moved to $category/"
 done
 
+python scripts/generate_particulate_pointcloud_twopose_data.py data/dataset/train \
+ --data-type train \
+ --category cartesian_stage \
+ --category laptop_stand_with_articulated_height_adjustment \
+ --category parabolic_dish_on_azimuth_elevation_mount \
+ --num-scenes 400 \
+ --point-source mesh-sampling \
+ --num-points 4096

@@ -64,18 +64,39 @@ def collect_fit_dirs(
             raise SampleGenerationError(f"--fit-dir does not exist: {path}")
         resolved.append(path)
 
+    def _first_matching(patterns: Sequence[str]) -> List[Path]:
+        """Return the split dirs for the first glob pattern that matches any."""
+        for pattern in patterns:
+            hits = sorted(p for p in articraft_root.glob(pattern) if p.is_dir())
+            if hits:
+                return hits
+        return []
+
     if use_all:
-        resolved.extend(sorted(articraft_root.glob(f"**/sub_categories/*/fit/{dataset_type}")))
+        # Prefer the ``fit/`` layout (original Articraft dataset); fall back to the
+        # no-``fit`` layout (this repo's canonicalized output: <cat>/<subcat>/<split>).
+        resolved.extend(_first_matching([
+            f"**/sub_categories/*/fit/{dataset_type}",
+            f"*/sub_categories/*/{dataset_type}",
+            f"*/*/{dataset_type}",
+        ]))
 
     for category in categories:
-        matches = sorted(articraft_root.glob(f"**/sub_categories/{category}/fit/{dataset_type}"))
-        if not matches:
-            # Allow passing a top-level category folder name as well.
-            matches = sorted(articraft_root.glob(f"{category}/sub_categories/*/fit/{dataset_type}"))
+        # ``category`` may be a sub-category name or a top-level category folder,
+        # and the tree may or may not carry the ``fit/`` level.  Try, in order of
+        # preference (``fit/`` first), the layouts we know about:
+        matches = _first_matching([
+            f"**/sub_categories/{category}/fit/{dataset_type}",   # sub-category, fit layout
+            f"{category}/sub_categories/*/fit/{dataset_type}",    # top-level category, fit layout
+            f"**/sub_categories/{category}/{dataset_type}",       # sub-category, no fit
+            f"{category}/sub_categories/*/{dataset_type}",        # top-level, sub_categories, no fit
+            f"{category}/*/fit/{dataset_type}",                   # <category>/<subcat>/fit/<split>
+            f"{category}/*/{dataset_type}",                       # <category>/<subcat>/<split> (canonical output)
+        ])
         if not matches:
             raise SampleGenerationError(
-                f"No 'fit' folder found for category '{category}' under "
-                f"{articraft_root}"
+                f"No '{dataset_type}' object folder found for category '{category}' "
+                f"under {articraft_root}"
             )
         resolved.extend(matches)
 

@@ -13,16 +13,38 @@ The normalization formula matches ``tools/dataset.py``:
     (points - bbox_min) * factor + 0.5 - 0.5 * (bbox_max - bbox_min) * factor
 
 where ``factor = 1 / ||bbox_max - bbox_min||_2``.
+
+Objects that do not ship a ``bounding_box.json`` (which the S2U simulator needs
+to size/place the object) are handled exactly as in
+``generate_particulate_pointcloud_twopose_data.py``: when an Articraft-10K
+``fit`` source is passed (``--category`` / ``--fit-dir`` / ``--all-categories``),
+each ``.tar.gz`` archive is extracted into a staging object-set directory and a
+``bounding_box.json`` is synthesized from the URDF's visual geometry before the
+base single-pose generator runs.
+
+Point-cloud source (``--point-sampling``)
+-----------------------------------------
+By default the point cloud is produced by multi-view depth scanning + TSDF
+fusion (the base generator's ``acquire_part_labeled_point_cloud``). Passing
+``--point-sampling`` instead samples the cloud directly from the part surface
+meshes at the object's current pose (area-weighted across parts). Everything
+downstream -- stratified downsampling, normalization, NOCS/NPCS targets -- is
+identical; only the acquisition method changes. Tune density with
+``--sampling-points`` (total surface points before downsampling) and
+``--sampling-min-per-part``.
 """
 
 from __future__ import annotations
 
+import argparse
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
 import numpy as np
 
 import generate_particulate_pointcloud_data as particulate
+import generate_particulate_pointcloud_twopose_data as twopose
 
 
 _BASE_CREATE_TRAINING_SAMPLE = particulate.create_training_sample
@@ -504,6 +526,160 @@ def collect_part_meshes(
     }
 
 
+def _visual_world_mesh(
+    visual: Tuple[Any, ...],
+    object_path: Path,
+    client_id: int,
+) -> Any | None:
+    """Build a world-posed ``trimesh`` for one PyBullet visual (mesh or primitive).
+
+    Returns ``None`` if the visual has no usable surface geometry.  Primitive
+    dimensions follow PyBullet's ``getVisualShapeData`` convention: box = full
+    extents ``[x, y, z]``; cylinder = ``[length, radius, 0]``; sphere =
+    ``[radius, ...]``.
+    """
+    import trimesh
+    import pybullet
+    from s2u.utils.saver import get_mesh_pose
+
+    geometry_type = int(visual[2])
+    dimensions = np.asarray(visual[3], dtype=np.float64)
+    mesh_name = visual[4].decode("utf-8") if isinstance(visual[4], bytes) else visual[4]
+
+    mesh = None
+    if geometry_type == pybullet.GEOM_MESH and mesh_name:
+        mesh_path = Path(mesh_name)
+        if not mesh_path.is_absolute():
+            mesh_path = object_path.parent / mesh_path
+        loaded = trimesh.load(str(mesh_path), force="mesh", process=False)
+        if isinstance(loaded, trimesh.Scene):
+            parts = [g for g in loaded.geometry.values() if len(g.vertices) > 0]
+            loaded = trimesh.util.concatenate(parts) if parts else None
+        if loaded is not None and len(loaded.vertices) > 0:
+            mesh = loaded
+            if dimensions.size == 3:
+                mesh.apply_scale(dimensions.reshape(3))
+            elif dimensions.size == 1:
+                mesh.apply_scale(float(dimensions[0]))
+    elif geometry_type == pybullet.GEOM_BOX:
+        mesh = trimesh.creation.box(extents=dimensions.reshape(-1)[:3])
+    elif geometry_type == pybullet.GEOM_SPHERE:
+        mesh = trimesh.creation.icosphere(radius=float(dimensions.reshape(-1)[0]))
+    elif geometry_type == pybullet.GEOM_CYLINDER:
+        values = dimensions.reshape(-1)
+        mesh = trimesh.creation.cylinder(
+            radius=float(values[1]), height=float(values[0])
+        )
+
+    if mesh is None or len(mesh.vertices) == 0:
+        return None
+    _, _, _, visual_world_transform = get_mesh_pose(visual, client_id)
+    mesh.apply_transform(np.asarray(visual_world_transform.as_matrix(), dtype=np.float64))
+    return mesh
+
+
+def sample_part_labeled_point_cloud(
+    sim: Any,
+    part_source_links: Mapping[int, Sequence[int]],
+    total_points: int,
+    min_points_per_part: int,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Drop-in replacement for ``acquire_part_labeled_point_cloud`` that samples
+    the point cloud directly from the part surface meshes rather than fusing
+    multi-view depth scans.
+
+    Points are sampled at the object's *current* joint pose, area-weighted across
+    parts (with a per-part minimum), and labelled with the pipeline part index.
+    Returns ``(points_world, labels, normals)`` with the same contract as the
+    scanning acquisition, so the downstream stratified downsample / normalization
+    / NOCS logic is unchanged.
+    """
+    import trimesh
+
+    bullet = sim.world.p
+    client_id = getattr(bullet, "_client", 0)
+    object_path = Path(sim.object_urdfs[sim.object_idx])
+
+    part_ids = sorted(part_source_links)  # part indices, in pipeline order
+    row_of_link: Dict[int, int] = {}
+    for row, part_id in enumerate(part_ids):
+        for link in part_source_links[part_id]:
+            row_of_link[int(link)] = row
+
+    meshes_by_row: List[List[Any]] = [[] for _ in part_ids]
+    for visual in bullet.getVisualShapeData(sim.object.uid):
+        row = row_of_link.get(int(visual[1]))
+        if row is None:
+            continue
+        mesh = _visual_world_mesh(visual, object_path, client_id)
+        if mesh is not None and len(mesh.faces) > 0:
+            meshes_by_row[row].append(mesh)
+
+    combined: List[Any] = []
+    areas = np.zeros(len(part_ids), dtype=np.float64)
+    for row in range(len(part_ids)):
+        if meshes_by_row[row]:
+            mesh = trimesh.util.concatenate(meshes_by_row[row])
+            combined.append(mesh)
+            areas[row] = float(getattr(mesh, "area", 0.0))
+        else:
+            combined.append(None)
+
+    total_area = float(areas.sum())
+    if total_area <= 0.0:
+        raise particulate.SampleGenerationError(
+            "Point sampling found no surface geometry on the object"
+        )
+
+    points_chunks: List[np.ndarray] = []
+    label_chunks: List[np.ndarray] = []
+    normal_chunks: List[np.ndarray] = []
+    for row in range(len(part_ids)):
+        mesh = combined[row]
+        if mesh is None or areas[row] <= 0.0:
+            raise particulate.SampleGenerationError(
+                f"Part {row} has no surface geometry to sample"
+            )
+        count = max(
+            int(min_points_per_part),
+            int(round(total_points * areas[row] / total_area)),
+        )
+        try:
+            points_local, face_indices = trimesh.sample.sample_surface(
+                mesh, count, seed=row
+            )
+        except TypeError:  # older trimesh without the seed kwarg
+            points_local, face_indices = trimesh.sample.sample_surface(mesh, count)
+        points_chunks.append(np.asarray(points_local, dtype=np.float64))
+        label_chunks.append(np.full(len(points_local), row, dtype=np.int16))
+        normal_chunks.append(
+            np.asarray(mesh.face_normals[face_indices], dtype=np.float64)
+        )
+
+    points = np.concatenate(points_chunks, axis=0)
+    labels = np.concatenate(label_chunks, axis=0)
+    normals = np.concatenate(normal_chunks, axis=0)
+    return points, labels, normals
+
+
+def _make_sampling_acquire(total_points: int, min_points_per_part: int):
+    """Return an ``acquire_part_labeled_point_cloud``-compatible callable that
+    samples surface points instead of scanning (scan-only args are ignored)."""
+
+    def acquire(
+        sim: Any,
+        part_source_links: Mapping[int, Sequence[int]],
+        num_views: int = 0,
+        tsdf_resolution: int = 0,
+        min_segmentation_score: float = 0.0,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        return sample_part_labeled_point_cloud(
+            sim, part_source_links, total_points, min_points_per_part
+        )
+
+    return acquire
+
+
 def validate_nocs(sample: Mapping[str, np.ndarray]) -> None:
     points = sample["points"]
     for key in ("nocs_p", "nocs_g"):
@@ -644,9 +820,195 @@ def schema_description() -> Dict[str, str]:
     return schema
 
 
+def _staging_arg_parser() -> argparse.ArgumentParser:
+    """Options that select and stage Articraft-10K ``fit`` objects.
+
+    These mirror ``generate_particulate_pointcloud_twopose_data.py`` and are
+    consumed here (not by the base single-pose generator), so they are stripped
+    from ``sys.argv`` before ``particulate.main()`` parses the rest.
+    """
+
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument(
+        "--articraft-root",
+        type=Path,
+        default=Path("~/Articraft-10K"),
+        help="Root of the Articraft-10K dataset",
+    )
+    parser.add_argument(
+        "--category",
+        action="append",
+        default=[],
+        help="Sub-category name whose 'fit' objects are used (repeatable)",
+    )
+    parser.add_argument(
+        "--fit-dir",
+        action="append",
+        default=[],
+        help="Explicit path to a 'fit' folder (repeatable)",
+    )
+    parser.add_argument(
+        "--all-categories",
+        action="store_true",
+        help="Use every 'fit' folder found under --articraft-root",
+    )
+    parser.add_argument(
+        "--dataset-type",
+        choices=("train", "val", "test"),
+        default="train",
+        help="Dataset type (used to select categories when --all-categories)",
+    )
+    parser.add_argument(
+        "--staging-root",
+        type=Path,
+        default=None,
+        help="Where to extract objects (default: <root>/staging)",
+    )
+    parser.add_argument(
+        "--restage",
+        action="store_true",
+        help="Re-extract archives and recompute bounding boxes even if staged",
+    )
+    parser.add_argument(
+        "--bbox-pose-samples",
+        type=int,
+        default=16,
+        help=(
+            "Random joint configurations (plus rest + both extremes) unioned "
+            "when synthesizing each object's bounding box. 0 = rest only"
+        ),
+    )
+    parser.add_argument(
+        "--point-sampling",
+        action="store_true",
+        help=(
+            "Sample the point cloud directly from part surface meshes instead of "
+            "multi-view depth scanning + TSDF fusion"
+        ),
+    )
+    parser.add_argument(
+        "--sampling-points",
+        type=int,
+        default=50000,
+        help=(
+            "Total surface points sampled (area-weighted across parts) when "
+            "--point-sampling; downsampled to --num-points afterwards"
+        ),
+    )
+    parser.add_argument(
+        "--sampling-min-per-part",
+        type=int,
+        default=512,
+        help="Minimum surface points sampled per part when --point-sampling",
+    )
+    return parser
+
+
+def _peek_base_options(remaining: Sequence[str]) -> argparse.Namespace:
+    """Read the base-generator options staging needs, without consuming them."""
+
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("root", type=Path)
+    parser.add_argument("--object-set", default="articraft_fit")
+    parser.add_argument(
+        "--sim-src",
+        type=Path,
+        default=Path("~/Articulated_object_simulation-main/src"),
+    )
+    parser.add_argument("--pos-rot", type=int, choices=(0, 1), default=1)
+    parser.add_argument(
+        "--is-syn",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+    )
+    known, _ = parser.parse_known_args(list(remaining))
+    return known
+
+
+def _stage_fit_objects(
+    staging_args: argparse.Namespace,
+    remaining: List[str],
+) -> List[str]:
+    """Stage the selected Articraft ``fit`` objects and point the base generator
+    at the staged object set. Returns the updated base-generator argv."""
+
+    base_opts = _peek_base_options(remaining)
+    sim_src = base_opts.sim_src.expanduser().resolve()
+    object_set = base_opts.object_set
+    root = base_opts.root.expanduser().resolve()
+    staging_root = staging_args.staging_root or (root / "staging")
+    staging_root = staging_root.expanduser().resolve()
+    articraft_root = staging_args.articraft_root.expanduser().resolve()
+    articraft_root = staging_args.articraft_root
+    print(f"articraft_root = {staging_args.articraft_root}", flush=True)
+    is_syn = base_opts.is_syn
+    if is_syn is None:
+        is_syn = "syn" in object_set.lower()
+
+    fit_dirs = twopose.collect_fit_dirs(
+        articraft_root,
+        staging_args.category,
+        staging_args.fit_dir,
+        staging_args.all_categories,
+        staging_args.dataset_type,
+    )
+    print(f"Staging objects from {len(fit_dirs)} 'fit' folder(s)...", flush=True)
+    object_set_dir, _ = twopose.stage_objects(
+        fit_dirs,
+        staging_root,
+        object_set,
+        sim_src,
+        overwrite=staging_args.restage,
+        bbox_options={
+            "is_syn": is_syn,
+            "pos_rot": bool(base_opts.pos_rot),
+            "num_pose_samples": staging_args.bbox_pose_samples,
+        },
+    )
+    staged_count = len([p for p in object_set_dir.iterdir() if p.is_dir()])
+    print(f"Staged {staged_count} objects into {object_set_dir}", flush=True)
+
+    # Append the staged locations so they override any earlier user values when
+    # the base generator re-parses the argv (argparse keeps the last occurrence).
+    return remaining + [
+        "--object-set",
+        object_set,
+        "--urdf-root",
+        str(staging_root),
+    ]
+
+
 def main() -> None:
     particulate.create_training_sample = create_training_sample
     particulate.schema_description = schema_description
+
+    staging_args, remaining = _staging_arg_parser().parse_known_args()
+
+    if staging_args.point_sampling:
+        # Replace multi-view scanning with direct surface sampling.  Assigning the
+        # module attribute mirrors the create_training_sample / schema_description
+        # patches above and propagates to forked worker processes.
+        particulate.acquire_part_labeled_point_cloud = _make_sampling_acquire(
+            staging_args.sampling_points,
+            staging_args.sampling_min_per_part,
+        )
+        print(
+            "Point cloud source: surface sampling "
+            f"(~{staging_args.sampling_points} pts total, "
+            f"min {staging_args.sampling_min_per_part}/part); "
+            "multi-view scanning disabled.",
+            flush=True,
+        )
+
+    use_fit = bool(
+        staging_args.category
+        or staging_args.fit_dir
+        or staging_args.all_categories
+    )
+    if use_fit:
+        remaining = _stage_fit_objects(staging_args, remaining)
+
+    sys.argv = [sys.argv[0], *remaining]
     particulate.main()
 
 
