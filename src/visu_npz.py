@@ -5,7 +5,7 @@ import os
 import glob
 sys.path.append('/home/suhaib/Ditto/Articulated_object_simulation-main')
 
-data_path = os.path.expanduser("~/Articulated_object_simulation-main/data/dataset/parabolic_dish_on_azimuth_elevation_mount_Canonical_zero/samples")
+data_path = os.path.expanduser("~/Articulated_object_simulation-main/data/dataset/robotic_arm_zero/samples")
 # # data_path = os.path.expanduser("~/particulate/dataset/train/samples")
 # print (f"Data path: {data_path}")
 # npz_files = glob.glob(os.path.join(data_path, "*.npz"))
@@ -67,7 +67,7 @@ npz_files = glob.glob(os.path.join(data_path, "*.npz"))
 index = np.random.randint(0, len(npz_files))
 
 geometries = []
-for index in range(30):
+for index in range(5,6):
     print(f"Index: {index}")
     npz_file = npz_files[index]
     data = np.load(npz_file)
@@ -80,7 +80,7 @@ for index in range(30):
     print(f"Object path: {obj_path}")
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points)
-    colors = np.asarray(nocs_g)
+    colors = np.asarray(nocs_p)
     structure = data['part_structure_matrix'].astype(int)
     masks = data['point_to_bone']
     # for i in range(structure.shape[0]):

@@ -20,7 +20,8 @@ Every joint starts at its zero state, and RGB coordinate frames are drawn for:
   * every link/part frame.
 
 In the GUI a **slider is added for each movable joint** (ranged over its limits);
-dragging a slider moves that joint and the link/joint frames follow live.
+dragging a slider moves that joint and the link/joint frames follow live. The
+frames are drawn without text labels to keep the view uncluttered.
 
 Axis colouring follows the usual convention: X = red, Y = green, Z = blue.
 
@@ -143,7 +144,7 @@ def resolve_urdf_path(path: str, index: int = 0, list_only: bool = False) -> str
     return path
 
 
-def draw_frame(position, orientation, label, axis_len=0.15, line_width=3.0,
+def draw_frame(position, orientation, label, axis_len=0.15, line_width=6.0,
                ids=None):
     """Draw (or redraw) an RGB coordinate frame at (position, quaternion).
 
@@ -172,7 +173,7 @@ def draw_frame(position, orientation, label, axis_len=0.15, line_width=3.0,
     return new_ids
 
 
-def draw_dynamic_frames(body, num_joints, axis_len, no_labels, registry):
+def draw_dynamic_frames(body, num_joints, axis_len, registry):
     """Draw/redraw every link frame and joint axis at the current joint state.
 
     ``registry`` holds the debug-item ids between calls so items are replaced
@@ -181,18 +182,15 @@ def draw_dynamic_frames(body, num_joints, axis_len, no_labels, registry):
     """
     for j in range(num_joints):
         info = p.getJointInfo(body, j)
-        joint_name = info[1].decode("utf-8")
         joint_type = info[2]
-        link_name = info[12].decode("utf-8")
 
         link_state = p.getLinkState(body, j, computeForwardKinematics=True)
         link_pos = link_state[4]   # worldLinkFramePosition
         link_orn = link_state[5]   # worldLinkFrameOrientation
 
-        # Link / part frame.
-        part_label = None if no_labels else f"part:{link_name}"
+        # Link / part frame (no text label -- names are intentionally omitted).
         registry["frame"][j] = draw_frame(
-            link_pos, link_orn, part_label, axis_len=axis_len,
+            link_pos, link_orn, None, axis_len=axis_len,
             ids=registry["frame"].get(j))
 
         # Joint axis (yellow) for movable joints.
@@ -203,17 +201,11 @@ def draw_dynamic_frames(body, num_joints, axis_len, no_labels, registry):
             origin = np.asarray(link_pos, dtype=float)
             start = origin - axis_world * axis_len
             end = origin + axis_world * axis_len
-            kwargs = dict(lineWidth=4.0, lifeTime=0)
+            kwargs = dict(lineWidth=7.0, lifeTime=0)
             if registry["axis"].get(j, -1) >= 0:
                 kwargs["replaceItemUniqueId"] = registry["axis"][j]
             registry["axis"][j] = p.addUserDebugLine(
                 start.tolist(), end.tolist(), (1, 1, 0), **kwargs)
-            if not no_labels:
-                kwargs = dict(textColorRGB=(1, 1, 0), textSize=1.0)
-                if registry["axistxt"].get(j, -1) >= 0:
-                    kwargs["replaceItemUniqueId"] = registry["axistxt"][j]
-                registry["axistxt"][j] = p.addUserDebugText(
-                    f"joint:{joint_name}", end.tolist(), **kwargs)
 
 
 def build_joint_sliders(body, num_joints):
@@ -247,8 +239,6 @@ def main():
                         help="List archives under a directory and exit.")
     parser.add_argument("--axis-len", type=float, default=0.15,
                         help="Length of the drawn coordinate axes (metres).")
-    parser.add_argument("--no-labels", action="store_true",
-                        help="Do not draw text labels next to the frames.")
     parser.add_argument("--headless", action="store_true",
                         help="Run without the GUI (prints frames and exits).")
     args = parser.parse_args()
@@ -281,9 +271,8 @@ def main():
 
     # --- Object (base) frame (static; base is fixed) --------------------------
     base_pos, base_orn = p.getBasePositionAndOrientation(body)
-    label = None if args.no_labels else "object (base)"
-    draw_frame(base_pos, base_orn, label, axis_len=args.axis_len * 1.4,
-               line_width=5.0)
+    draw_frame(base_pos, base_orn, None, axis_len=args.axis_len * 1.4,
+               line_width=9.0)
     print("\nObject (base) frame:")
     print(f"  position    = {np.round(base_pos, 4).tolist()}")
     print(f"  orientation = {np.round(base_orn, 4).tolist()} (quat xyzw)")
@@ -307,8 +296,8 @@ def main():
     print("\nLegend: X=red  Y=green  Z=blue  |  joint axis=yellow")
 
     # Registry of debug-item ids so the frames can be redrawn in place.
-    registry = {"frame": {}, "axis": {}, "axistxt": {}}
-    draw_dynamic_frames(body, num_joints, args.axis_len, args.no_labels, registry)
+    registry = {"frame": {}, "axis": {}}
+    draw_dynamic_frames(body, num_joints, args.axis_len, registry)
 
     if mode == p.GUI:
         sliders = build_joint_sliders(body, num_joints)
@@ -318,6 +307,17 @@ def main():
             cameraDistance=1.2, cameraYaw=45, cameraPitch=-30,
             cameraTargetPosition=base_pos,
         )
+        import math
+        euler_angles = [0, 0, 0]
+
+        # 2. Convert Euler angles to a Quaternion [x, y, z, w]
+        target_quaternion = p.getQuaternionFromEuler(euler_angles)
+
+        # 3. Retrieve current position so you don't accidentally move the object
+        current_position, _ = p.getBasePositionAndOrientation(body)
+
+        # 4. Teleport the object to the new rotation
+        p.resetBasePositionAndOrientation(body, current_position, target_quaternion)
         print("Close the window or press Ctrl+C to exit.")
         last = {j: None for j, _ in sliders}
         try:
@@ -332,7 +332,7 @@ def main():
                         changed = True
                 if changed:  # redraw frames only when a joint actually moved
                     draw_dynamic_frames(body, num_joints, args.axis_len,
-                                        args.no_labels, registry)
+                                        registry)
                 p.stepSimulation()
                 time.sleep(1.0 / 240.0)
         except KeyboardInterrupt:
