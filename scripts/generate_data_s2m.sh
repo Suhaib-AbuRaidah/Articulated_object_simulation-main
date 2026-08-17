@@ -102,3 +102,34 @@ python scripts/generate_particulate_pointcloud_twopose_data.py data/dataset/trai
  --num-scenes 400 \
  --point-source mesh-sampling \
  --num-points 4096
+
+python scripts/visualize_object_frames.py /home/aburaidah/Articulated_object_simulation-main/data/urdfs/Dataset/parabolic_dish_on_azimuth_elevation_mount/sub_categories/parabolic_dish_on_azimuth_elevation_mount/fit/train/ --index 15
+python scripts/visualize_object_frames.py \
+/home/aburaidah/Articulated_object_simulation-main/data/urdfs/Verified/cartesian_stage/orthogonal_xy_stage/train/rec_orthogonal_xy_stage_850ce420a3934ec7aca2812a79b604b0.tar.gz
+
+python -m articraft_verify \
+ --dataset-root data/urdfs/Dataset \
+ --category astronomical_telescope_on_tripod  \
+ --sub-category astronomical_telescope_on_tripod \
+ --split train \
+ --output-dir /home/aburaidah/Articulated_object_simulation-main/data/urdfs/Verified \
+ --raw-urdf \
+ --no-skip-done \
+ --allow-fixed-branches
+
+dataset_type="train"
+python scripts/generate_particulate_pointcloud_nocs_data.py \
+  "./data/particulate_nocs_zero/cartesian_stage/$dataset_type" \
+  --articraft-root ./data/urdfs/Verified/cartesian_stage \
+  --all-categories \
+  --dataset-type "$dataset_type" \
+  --object-set "cartesian_stage_${dataset_type}_nocs_zero" \
+  --one-per-object \
+  --canonical \
+  --point-sampling \
+  --sampling-points 50000 \
+  --sampling-min-per-part 512 \
+  --num-points 8000 \
+  --num-proc 1 \
+  --max-attempts-per-sample 10 \
+  --log-every 1

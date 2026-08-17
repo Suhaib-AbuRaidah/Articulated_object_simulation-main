@@ -65,7 +65,9 @@ atexit.register(_cleanup_temp_dirs)
 def _find_archives(directory):
     """Return a sorted list of ``.tar.gz`` archives found under ``directory``."""
     matches = []
-    for root, _dirs, files in os.walk(directory):
+    for root, _dirs, files in sorted(os.walk(directory)):
+        if root.endswith("not-fit"):
+            continue  # skip not-fit archives
         for name in files:
             if name.endswith(".tar.gz"):
                 matches.append(os.path.join(root, name))
@@ -122,6 +124,7 @@ def resolve_urdf_path(path: str, index: int = 0, list_only: bool = False) -> str
         if not 0 <= index < len(archives):
             sys.exit(f"--index {index} out of range (0..{len(archives) - 1}).")
         archive = archives[index]
+        print(f"Found {len(archives)} archive(s) under '{path}':")
         print(f"Directory '{path}' -> archive [{index}]: {archive}")
         return _extract_urdf_from_archive(archive)
 
@@ -195,10 +198,33 @@ def draw_dynamic_frames(body, num_joints, axis_len, registry):
 
         # Joint axis (yellow) for movable joints.
         if joint_type != p.JOINT_FIXED:
-            rot = np.array(p.getMatrixFromQuaternion(link_orn)).reshape(3, 3)
-            axis_local = np.asarray(info[13], dtype=float)  # axis in child frame
+            # PyBullet exposes jointAxis in its internal joint frame, together
+            # with parentFramePosition/Orientation (indices 14/15). It is not
+            # generally valid to multiply jointAxis by the child-link frame:
+            # rotating a URDF inertial frame changes PyBullet's internal
+            # representation even though the URDF link frame stays fixed.
+            parent_index = int(info[16])
+            if parent_index == -1:
+                parent_pos, parent_orn = p.getBasePositionAndOrientation(body)
+            else:
+                parent_state = p.getLinkState(
+                    body,
+                    parent_index,
+                    computeForwardKinematics=True,
+                )
+                parent_pos = parent_state[0]  # world COM frame
+                parent_orn = parent_state[1]
+            joint_pos, joint_orn = p.multiplyTransforms(
+                parent_pos,
+                parent_orn,
+                info[14],
+                info[15],
+            )
+            rot = np.array(p.getMatrixFromQuaternion(joint_orn)).reshape(3, 3)
+            axis_local = np.asarray(info[13], dtype=float)
             axis_world = rot @ axis_local
-            origin = np.asarray(link_pos, dtype=float)
+            axis_world /= np.linalg.norm(axis_world) + 1e-12
+            origin = np.asarray(joint_pos, dtype=float)
             start = origin - axis_world * axis_len
             end = origin + axis_world * axis_len
             kwargs = dict(lineWidth=7.0, lifeTime=0)
@@ -237,7 +263,7 @@ def main():
                         help="When 'path' is a directory, which archive to load.")
     parser.add_argument("--list", action="store_true",
                         help="List archives under a directory and exit.")
-    parser.add_argument("--axis-len", type=float, default=0.15,
+    parser.add_argument("--axis-len", type=float, default=0.5,
                         help="Length of the drawn coordinate axes (metres).")
     parser.add_argument("--headless", action="store_true",
                         help="Run without the GUI (prints frames and exits).")
@@ -270,7 +296,19 @@ def main():
         p.resetJointState(body, j, targetValue=0, targetVelocity=0.0)
 
     # --- Object (base) frame (static; base is fixed) --------------------------
-    base_pos, base_orn = p.getBasePositionAndOrientation(body)
+    # getBasePositionAndOrientation returns PyBullet's base centre-of-mass
+    # frame, not necessarily the URDF base-link frame. Recover the latter by
+    # removing the local inertial offset; otherwise a rotated inertial frame is
+    # incorrectly displayed as a rotated link frame.
+    base_com_pos, base_com_orn = p.getBasePositionAndOrientation(body)
+    dynamics = p.getDynamicsInfo(body, -1)
+    inverse_inertial = p.invertTransform(dynamics[3], dynamics[4])
+    base_pos, base_orn = p.multiplyTransforms(
+        base_com_pos,
+        base_com_orn,
+        inverse_inertial[0],
+        inverse_inertial[1],
+    )
     draw_frame(base_pos, base_orn, None, axis_len=args.axis_len * 1.4,
                line_width=9.0)
     print("\nObject (base) frame:")
@@ -307,17 +345,6 @@ def main():
             cameraDistance=1.2, cameraYaw=45, cameraPitch=-30,
             cameraTargetPosition=base_pos,
         )
-        import math
-        euler_angles = [0, 0, 0]
-
-        # 2. Convert Euler angles to a Quaternion [x, y, z, w]
-        target_quaternion = p.getQuaternionFromEuler(euler_angles)
-
-        # 3. Retrieve current position so you don't accidentally move the object
-        current_position, _ = p.getBasePositionAndOrientation(body)
-
-        # 4. Teleport the object to the new rotation
-        p.resetBasePositionAndOrientation(body, current_position, target_quaternion)
         print("Close the window or press Ctrl+C to exit.")
         last = {j: None for j, _ in sliders}
         try:

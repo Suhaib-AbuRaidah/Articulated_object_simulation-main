@@ -13,7 +13,6 @@ from typing import List
 
 from . import catalog as catalog_mod
 from .app import VerifierApp
-from .objectstate import MODE_FRAME_FIX, MODE_REST_POSE
 from .store import DecisionStore
 
 _DEFAULT_DATASET = Path("data/urdfs/Dataset")
@@ -41,8 +40,33 @@ def build_parser() -> argparse.ArgumentParser:
                    choices=["train", "val", "test"], help="Restrict to a split (repeatable).")
     p.add_argument("--include-not-fit", action="store_true",
                    help="Also include 'not-fit' archives (default: fit only).")
-    p.add_argument("--mode", choices=[MODE_FRAME_FIX, MODE_REST_POSE], default=MODE_FRAME_FIX,
-                   help="Default edit mode: frame-fix (frames only) or rest-pose (re-bake).")
+    p.add_argument(
+        "--raw-urdf",
+        action="store_true",
+        help=(
+            "Load the source URDF at its original q=0 state with its original "
+            "joint origins, limits, and link coordinate frames. Skip automatic "
+            "canonical-zero processing before interactive editing."
+        ),
+    )
+    p.add_argument(
+        "--allow-fixed-branches",
+        action="store_true",
+        help=(
+            "Accept URDF trees with fixed-only side branches when the moving-"
+            "joint skeleton is still serial. Fixed child links remain loaded, "
+            "rendered, transformed, and saved with their parents."
+        ),
+    )
+    p.add_argument(
+        "--counter-rotate-link-frames",
+        action="store_true",
+        help=(
+            "Start with frame counter-rotation enabled separately for every "
+            "rotational joint. Each joint also has its own GUI checkbox. "
+            "Geometry and physical joint axes still follow the full pose."
+        ),
+    )
     p.add_argument("--no-skip-done", action="store_true",
                    help="Do not jump past already-decided (unchanged) objects.")
     p.add_argument("--host", default="0.0.0.0")
@@ -64,6 +88,7 @@ def main(argv: List[str] | None = None) -> int:
         categories=args.category,
         sub_categories_filter=args.sub_category,
         splits=args.split,
+        allow_fixed_branches=args.allow_fixed_branches,
     )
     if not catalog.refs:
         print(f"No objects found under {args.dataset_root} with the given filters.")
@@ -73,7 +98,9 @@ def main(argv: List[str] | None = None) -> int:
     app = VerifierApp(
         catalog, store, args.reference_dir,
         host=args.host, port=args.port,
-        default_mode=args.mode, skip_done=not args.no_skip_done,
+        skip_done=not args.no_skip_done,
+        raw_urdf=args.raw_urdf,
+        default_counter_rotate_link_frames=args.counter_rotate_link_frames,
     )
     app.run()
     return 0

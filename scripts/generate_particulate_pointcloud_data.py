@@ -139,6 +139,34 @@ def get_all_joint_info(sim: Any) -> Dict[int, Tuple[Any, ...]]:
     }
 
 
+def object_frame_source_link_ids(
+    all_joint_info: Mapping[int, Tuple[Any, ...]],
+    ordered_owners: Sequence[int],
+) -> List[int]:
+    """Choose the physical link frame representing each merged rigid part.
+
+    Verified URDFs can contain a geometry-free ``articraft_global`` root whose
+    fixed child is the original object base.  For that explicit wrapper, use
+    the child frame as the base-part/NOCS frame while retaining ``-1`` as the
+    rigid part owner.  Ordinary URDFs keep their previous owner-frame mapping.
+    """
+    source_ids = list(ordered_owners)
+    if not source_ids or source_ids[0] != -1:
+        return source_ids
+    for joint_id, joint_data in all_joint_info.items():
+        joint_name = joint_data[1]
+        if isinstance(joint_name, bytes):
+            joint_name = joint_name.decode("utf-8", errors="replace")
+        if (
+            int(joint_data[2]) == FIXED
+            and int(joint_data[-1]) == -1
+            and str(joint_name).startswith("articraft_global_to_base")
+        ):
+            source_ids[0] = int(joint_id)
+            break
+    return source_ids
+
+
 def build_part_structure(
     all_joint_info: Mapping[int, Tuple[Any, ...]],
     max_parts: int,
@@ -259,6 +287,10 @@ def build_part_structure(
     }
     return {
         "ordered_owners": ordered_owners,
+        "frame_source_link_ids": object_frame_source_link_ids(
+            all_joint_info,
+            ordered_owners,
+        ),
         "owner_to_part": owner_to_part,
         "source_link_to_part": source_link_to_part,
         "part_source_links": part_source_links,
@@ -354,6 +386,10 @@ def limit_moving_joints(
     }
     return {
         "ordered_owners": ordered_owners,
+        "frame_source_link_ids": object_frame_source_link_ids(
+            all_joint_info,
+            ordered_owners,
+        ),
         "owner_to_part": owner_to_part,
         "source_link_to_part": source_link_to_part,
         "part_source_links": part_source_links,
@@ -1056,6 +1092,18 @@ def generate_worker(
             "Every discovered URDF must have a matching bounding_box.json"
         )
 
+    one_per_object = getattr(args, "one_per_object", False)
+    if one_per_object:
+        # Simulation discovery follows filesystem iteration order. Sort the URDF
+        # and bounding-box pairs together so sample index i always selects the
+        # same object, including when indices are distributed across workers.
+        object_pairs = sorted(
+            zip(sim.object_urdfs, sim.object_bbox),
+            key=lambda pair: str(pair[0]),
+        )
+        sim.object_urdfs = [pair[0] for pair in object_pairs]
+        sim.object_bbox = [pair[1] for pair in object_pairs]
+
     errors: List[str] = []
     for position, sample_index in enumerate(sample_indices):
         output_path = args.root / "samples" / f"{sample_index:08d}.npz"
@@ -1065,7 +1113,8 @@ def generate_worker(
         last_error: Exception | None = None
         for _ in range(args.max_attempts_per_sample):
             try:
-                sim.reset(canonical=args.canonical)
+                object_index = sample_index if one_per_object else None
+                sim.reset(index=object_index, canonical=args.canonical)
                 sample = create_training_sample(sim, args, rng, sample_index)
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 np.savez_compressed(output_path, **sample)
@@ -1139,6 +1188,15 @@ def parse_args() -> argparse.Namespace:
         default=Path("~/Articulated_object_simulation-main/data/urdfs"),
     )
     parser.add_argument("--num-scenes", type=int, default=1000)
+    parser.add_argument(
+        "--one-per-object",
+        action="store_true",
+        help=(
+            "Generate exactly one sample for every discovered URDF, in sorted "
+            "path order; overrides --num-scenes and disables random object "
+            "selection"
+        ),
+    )
     parser.add_argument("--num-proc", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num-points", type=int, default=8000)
@@ -1213,6 +1271,27 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.one_per_object:
+        object_root = args.urdf_root / args.object_set
+        if not object_root.is_dir():
+            raise SampleGenerationError(
+                f"Object set directory does not exist: {object_root}"
+            )
+        args.num_scenes = sum(
+            1
+            for object_dir in object_root.iterdir()
+            if object_dir.is_dir()
+            and any(path.suffix == ".urdf" for path in object_dir.iterdir())
+        )
+        if args.num_scenes == 0:
+            raise SampleGenerationError(
+                f"No URDF object directories found under {object_root}"
+            )
+        print(
+            f"One-per-object mode: generating {args.num_scenes} sample(s) "
+            "in sorted URDF order.",
+            flush=True,
+        )
     args.root.mkdir(parents=True, exist_ok=True)
     (args.root / "samples").mkdir(parents=True, exist_ok=True)
     indices_per_worker = [

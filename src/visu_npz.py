@@ -3,9 +3,12 @@ import open3d as o3d
 import sys
 import os 
 import glob
+from visu_npz_test import create_aabb_lineset
+
 sys.path.append('/home/suhaib/Ditto/Articulated_object_simulation-main')
 
-data_path = os.path.expanduser("~/Articulated_object_simulation-main/data/dataset/robotic_arm_zero/samples")
+# data_path = os.path.expanduser("~/Articulated_object_simulation-main/data/dataset/robotic_arm_zero/samples")
+data_path = os.path.expanduser("~/Articulated_object_simulation-main/data/particulate_nocs_zero/cartesian_stage/**/samples")
 # # data_path = os.path.expanduser("~/particulate/dataset/train/samples")
 # print (f"Data path: {data_path}")
 # npz_files = glob.glob(os.path.join(data_path, "*.npz"))
@@ -67,7 +70,7 @@ npz_files = glob.glob(os.path.join(data_path, "*.npz"))
 index = np.random.randint(0, len(npz_files))
 
 geometries = []
-for index in range(5,6):
+for index in range(len(npz_files)):
     print(f"Index: {index}")
     npz_file = npz_files[index]
     data = np.load(npz_file)
@@ -80,7 +83,7 @@ for index in range(5,6):
     print(f"Object path: {obj_path}")
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points)
-    colors = np.asarray(nocs_p)
+    colors = np.asarray(nocs_g)
     structure = data['part_structure_matrix'].astype(int)
     masks = data['point_to_bone']
     # for i in range(structure.shape[0]):
@@ -89,4 +92,7 @@ for index in range(5,6):
     pcd.colors = o3d.utility.Vector3dVector(colors)
     pcd.translate((index * 1.5, 0, 0))  # Translate each point cloud for better visualization
     geometries.append(pcd)
-o3d.visualization.draw_geometries(geometries, window_name="Point Cloud and Mesh", width=800, height=600)
+    line_set_fixed = create_aabb_lineset(np.array([0.0,0.0,0.0]), np.array([1.0,1.0,1.0]), color=(0.0, 1.0, 0.0))
+    line_set_fixed.translate(np.array([index * 1.5, 0, 0])-np.array([0.5,0.5,0.5]))
+    geometries.append(line_set_fixed)
+o3d.visualization.draw_geometries(geometries, window_name="Point Cloud and Mesh", width=1600, height=1200)

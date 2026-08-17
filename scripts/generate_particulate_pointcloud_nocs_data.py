@@ -32,6 +32,14 @@ downstream -- stratified downsampling, normalization, NOCS/NPCS targets -- is
 identical; only the acquisition method changes. Tune density with
 ``--sampling-points`` (total surface points before downsampling) and
 ``--sampling-min-per-part``.
+
+Object coverage (``--one-per-object``)
+--------------------------------------
+By default, ``--num-scenes`` scenes choose staged objects randomly. Passing
+``--one-per-object`` instead sorts all staged URDF paths and generates exactly
+one sample for each object. ``--num-scenes`` is ignored in this mode. With
+multiple workers, sample indices are divided between workers but still map to
+the same sorted object list, so objects are neither duplicated nor omitted.
 """
 
 from __future__ import annotations
@@ -49,6 +57,12 @@ import generate_particulate_pointcloud_twopose_data as twopose
 
 _BASE_CREATE_TRAINING_SAMPLE = particulate.create_training_sample
 _BASE_SCHEMA_DESCRIPTION = particulate.schema_description
+_BASE_GENERATE_WORKER = particulate.generate_worker
+_BASE_PARSE_ARGS = particulate.parse_args
+
+_RUNTIME_POINT_SAMPLING = False
+_RUNTIME_SAMPLING_POINTS = 50000
+_RUNTIME_SAMPLING_MIN_PER_PART = 512
 
 
 def transform_points(transform: Any, points: np.ndarray) -> np.ndarray:
@@ -123,18 +137,22 @@ def normalize_nocs(
 def get_owner_world_transforms(
     sim: Any,
     owner_ids: Sequence[int],
+    frame_source_link_ids: Sequence[int] | None = None,
 ) -> Dict[int, Any]:
     from s2u.utils.saver import get_body_pose, get_link_pose
 
     bullet = sim.world.p
     client_id = getattr(bullet, "_client", 0)
     transforms: Dict[int, Any] = {}
-    for owner_id in owner_ids:
-        if owner_id == -1:
+    source_ids = owner_ids if frame_source_link_ids is None else frame_source_link_ids
+    if len(source_ids) != len(owner_ids):
+        raise ValueError("owner IDs and frame-source IDs must have equal lengths")
+    for owner_id, source_id in zip(owner_ids, source_ids):
+        if source_id == -1:
             transforms[owner_id] = get_body_pose(sim.object.uid, client_id)
         else:
             transforms[owner_id] = get_link_pose(
-                (sim.object.uid, owner_id),
+                (sim.object.uid, source_id),
                 client_id,
             )
     return transforms
@@ -192,8 +210,8 @@ def primitive_bbox_points(geometry_type: int, dimensions: np.ndarray) -> np.ndar
         values = dimensions.reshape(-1)
         if values.size < 2:
             return np.empty((0, 3), dtype=np.float64)
-        radius = float(values[0])
-        height = float(values[1])
+        radius = float(values[1])
+        height = float(values[0])
         half = np.array([radius, radius, height * 0.5], dtype=np.float64)
     else:
         return np.empty((0, 3), dtype=np.float64)
@@ -301,8 +319,15 @@ def build_nocs_targets(
     part_ids: np.ndarray,
 ) -> Dict[str, np.ndarray]:
     ordered_owners = list(structure["ordered_owners"])
+    frame_source_link_ids = list(
+        structure.get("frame_source_link_ids", ordered_owners)
+    )
     object_path = Path(sim.object_urdfs[sim.object_idx])
-    current_transforms = get_owner_world_transforms(sim, ordered_owners)
+    current_transforms = get_owner_world_transforms(
+        sim,
+        ordered_owners,
+        frame_source_link_ids,
+    )
     part_coords = sampled_points_in_owner_frames(
         points_world,
         part_ids,
@@ -321,7 +346,11 @@ def build_nocs_targets(
     state_id = bullet.saveState()
     try:
         reset_movable_joints_to_rest(sim, all_joint_info)
-        rest_transforms = get_owner_world_transforms(sim, ordered_owners)
+        rest_transforms = get_owner_world_transforms(
+            sim,
+            ordered_owners,
+            frame_source_link_ids,
+        )
         global_reference = collect_visual_reference_points(
             sim,
             structure,
@@ -398,7 +427,10 @@ def build_nocs_targets(
         "nocs_global_factor": np.asarray(global_factor, dtype=np.float32),
         "nocs_global_bbox_min": global_bbox_min.reshape(3).astype(np.float32),
         "nocs_global_bbox_max": global_bbox_max.reshape(3).astype(np.float32),
-        "urdf_frame_source_link_ids": np.asarray(ordered_owners, dtype=np.int16),
+        "urdf_frame_source_link_ids": np.asarray(
+            frame_source_link_ids,
+            dtype=np.int16,
+        ),
         "urdf_object_current_frame": transform_matrix(base_current_transform),
         "urdf_link_current_frames": transform_matrix_array(
             current_transforms,
@@ -789,7 +821,8 @@ def schema_description() -> Dict[str, str]:
             "nocs_global_bbox_max": "(3,) float32 global/rest bbox maximum",
             "urdf_frame_source_link_ids": (
                 "(P,) int16 PyBullet source link ID for each stored frame; "
-                "-1 is the base link/object frame"
+                "normally -1 is the base frame, while an articraft_global "
+                "wrapper uses its fixed original-base child ID"
             ),
             "urdf_object_current_frame": (
                 "(4,4) float32 transform from object/base canonical frame to "
@@ -978,16 +1011,51 @@ def _stage_fit_objects(
     ]
 
 
-def main() -> None:
+def _parse_args_with_nocs_runtime() -> argparse.Namespace:
+    """Attach NOCS-only acquisition settings to the worker namespace."""
+    args = _BASE_PARSE_ARGS()
+    args.point_sampling = _RUNTIME_POINT_SAMPLING
+    args.sampling_points = _RUNTIME_SAMPLING_POINTS
+    args.sampling_min_per_part = _RUNTIME_SAMPLING_MIN_PER_PART
+    return args
+
+
+def generate_nocs_worker(
+    args: argparse.Namespace,
+    worker_id: int,
+    sample_indices: Sequence[int],
+) -> List[str]:
+    """Reinstall NOCS hooks inside spawned workers before base generation."""
     particulate.create_training_sample = create_training_sample
     particulate.schema_description = schema_description
+    if args.point_sampling:
+        particulate.acquire_part_labeled_point_cloud = _make_sampling_acquire(
+            args.sampling_points,
+            args.sampling_min_per_part,
+        )
+    return _BASE_GENERATE_WORKER(args, worker_id, sample_indices)
+
+
+def main() -> None:
+    global _RUNTIME_POINT_SAMPLING
+    global _RUNTIME_SAMPLING_POINTS
+    global _RUNTIME_SAMPLING_MIN_PER_PART
+
+    particulate.create_training_sample = create_training_sample
+    particulate.schema_description = schema_description
+    particulate.generate_worker = generate_nocs_worker
+    particulate.parse_args = _parse_args_with_nocs_runtime
 
     staging_args, remaining = _staging_arg_parser().parse_known_args()
 
+    _RUNTIME_POINT_SAMPLING = staging_args.point_sampling
+    _RUNTIME_SAMPLING_POINTS = staging_args.sampling_points
+    _RUNTIME_SAMPLING_MIN_PER_PART = staging_args.sampling_min_per_part
+
     if staging_args.point_sampling:
         # Replace multi-view scanning with direct surface sampling.  Assigning the
-        # module attribute mirrors the create_training_sample / schema_description
-        # patches above and propagates to forked worker processes.
+        # module attribute handles the current process; generate_nocs_worker
+        # reinstalls this hook in each spawned worker process.
         particulate.acquire_part_labeled_point_cloud = _make_sampling_acquire(
             staging_args.sampling_points,
             staging_args.sampling_min_per_part,

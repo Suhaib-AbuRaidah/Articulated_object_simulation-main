@@ -19,7 +19,7 @@ from typing import List
 
 import numpy as np
 
-from articraft_canon import geometry as geo
+from .normalization import normalize_from_points
 
 MODES = ("geometry", "nocs", "npcs")
 
@@ -44,16 +44,15 @@ def geometry_colors(part_ids: np.ndarray) -> np.ndarray:
 
 
 def nocs_colors(points_canonical: np.ndarray) -> np.ndarray:
-    """Global NOCS colours: the whole cloud normalised into the unit cube."""
+    """Global NOCS colours using diagonal scaling and cube-centering."""
     pts = np.asarray(points_canonical, dtype=float)
     if len(pts) == 0:
         return np.zeros((0, 3), np.uint8)
-    bmin, _bmax, factor = geo.unit_cube_normalization(pts)
-    return _to_rgb((pts - bmin) * factor)
+    return _to_rgb(normalize_from_points(pts))
 
 
 def npcs_colors(points_canonical: np.ndarray, part_ids: np.ndarray) -> np.ndarray:
-    """Per-part NPCS colours: each part normalised into its own unit cube."""
+    """Per-part NPCS colours using diagonal scaling and cube-centering."""
     pts = np.asarray(points_canonical, dtype=float)
     part_ids = np.asarray(part_ids, dtype=int)
     colors = np.zeros((len(pts), 3), np.uint8)
@@ -61,8 +60,7 @@ def npcs_colors(points_canonical: np.ndarray, part_ids: np.ndarray) -> np.ndarra
         mask = part_ids == pid
         if not np.any(mask):
             continue
-        bmin, _bmax, factor = geo.unit_cube_normalization(pts[mask])
-        colors[mask] = _to_rgb((pts[mask] - bmin) * factor)
+        colors[mask] = _to_rgb(normalize_from_points(pts[mask]))
     return colors
 
 

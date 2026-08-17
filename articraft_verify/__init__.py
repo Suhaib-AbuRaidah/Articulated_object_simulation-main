@@ -1,6 +1,6 @@
 """Articraft canonicalization verification GUI (Viser).
 
-A human-in-the-loop web tool to verify and correct the frames/rest-pose produced
+A human-in-the-loop web tool to verify and correct the frames/joint zero state produced
 by ``articraft_canon``, one object at a time, and re-bake accepted corrections
 into a separate output tree (originals untouched).
 

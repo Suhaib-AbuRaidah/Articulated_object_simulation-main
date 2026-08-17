@@ -111,7 +111,32 @@ def _link_canonical_direction(model: ObjectModel, link_name: str) -> np.ndarray:
         return axis / np.linalg.norm(axis)
 
     # Interior/base link: the vector to the next joint runs along the chain.
-    downstream = next((j for j in model.joints if j.parent == link_name), None)
+    # In a tree with fixed-only side attachments, choose the unique branch that
+    # contains a moving joint. Decorative fixed branches must not define the
+    # extension direction of the articulated backbone.
+    outgoing = [j for j in model.joints if j.parent == link_name]
+
+    def leads_to_moving_joint(joint: JointSpec) -> bool:
+        if joint.is_moving:
+            return True
+        stack = [joint.child]
+        while stack:
+            parent = stack.pop()
+            for candidate in model.joints:
+                if candidate.parent != parent:
+                    continue
+                if candidate.is_moving:
+                    return True
+                stack.append(candidate.child)
+        return False
+
+    if model.fixed_branches_allowed:
+        downstream = next(
+            (joint for joint in outgoing if leads_to_moving_joint(joint)),
+            None,
+        )
+    else:
+        downstream = outgoing[0] if outgoing else None
     if downstream is not None:
         v = np.asarray(downstream.origin[:3, 3], dtype=float)
         if np.linalg.norm(v) > 1e-6:

@@ -35,6 +35,7 @@ class Catalog:
     categories: Optional[List[str]] = None
     sub_categories_filter: Optional[List[str]] = None
     splits: Optional[List[str]] = None
+    allow_fixed_branches: bool = False
     refs: List[ArchiveRef] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -54,6 +55,7 @@ class Catalog:
         return parse.load_object(
             urdf, object_id=ref.object_id, source_archive=ref.archive,
             category=ref.category, sub_category=ref.sub_category, split=ref.split,
+            allow_fixed_branches=self.allow_fixed_branches,
         )
 
 

@@ -3,7 +3,7 @@
 Outputs mirror the ``articraft_canon`` layout so downstream tooling is unchanged:
 
     <output>/<category>/<sub_category>/<split>/<object_id>.tar.gz
-        <object_id>/model.urdf       # re-baked, base-aligned link frames
+        <object_id>/model.urdf       # accepted joint pose + link frames baked in
         <object_id>/canonical.json   # NOCS/NPCS + frames + verification provenance
         <object_id>/assets/...       # copied so the URDF stays valid
     <output>/_verify/decisions.json  # append-only decision log (resume by hash)
@@ -22,7 +22,6 @@ from typing import Dict, Optional
 
 import yourdfpy
 
-from articraft_canon import nocs
 from articraft_canon.dataset import ArchiveRef
 
 from .objectstate import ObjectState
@@ -56,9 +55,11 @@ class DecisionStore:
         ref: ArchiveRef,
         input_hash: str,
         outcome: str,
-    ) -> Path:
-        """Write the re-baked object + sidecar and append a decision entry."""
-        archive_path = self._write_object(state, ref)
+    ) -> Optional[Path]:
+        """Record a decision, writing an archive only for accepted objects."""
+        archive_path = (
+            None if outcome == "skipped" else self._write_object(state, ref)
+        )
         entry = {
             "object_id": ref.object_id,
             "category": ref.category,
@@ -66,11 +67,35 @@ class DecisionStore:
             "split": ref.split,
             "input_hash": input_hash,
             "outcome": outcome,                       # accepted | corrected | skipped
-            "mode": state.mode,
-            "link_euler_deg": {n: list(map(float, e)) for n, e in state.link_euler.items()},
-            "output_archive": str(archive_path.relative_to(self.output_dir)),
+            "raw_urdf": state.raw_urdf,
+            "fixed_branches_allowed": state.model.fixed_branches_allowed,
+            "frames_baked_into_urdf": state.frames_baked,
+            "applied_joint_state": dict(state.applied_joint_cfg),
+            "counter_rotated_link_frames_for_joint_state": (
+                bool(state.applied_counter_rotate_joint_frames)
+            ),
+            "counter_rotated_link_frames_for_joints": list(
+                state.applied_counter_rotate_joint_frames
+            ),
+            "applied_object_euler_deg": list(
+                map(float, state.applied_object_euler)
+            ),
+            "requested_joint_limits": {
+                name: list(map(float, limits))
+                for name, limits in state.requested_joint_limits.items()
+            },
+            "baked_joint_limits": {
+                name: list(map(float, limits))
+                for name, limits in state.applied_joint_limits.items()
+            },
+            "applied_link_euler_deg": {
+                name: list(map(float, e))
+                for name, e in state.applied_link_euler.items()
+            },
             "timestamp": _dt.datetime.now().isoformat(timespec="seconds"),
         }
+        if archive_path is not None:
+            entry["output_archive"] = str(archive_path.relative_to(self.output_dir))
         self._decisions[ref.object_id] = entry
         self._log_dir.mkdir(parents=True, exist_ok=True)
         self._log_path.write_text(json.dumps(self._decisions, indent=2))
@@ -83,8 +108,6 @@ class DecisionStore:
         out_dir.mkdir(parents=True, exist_ok=True)
         archive_path = out_dir / f"{ref.object_id}.tar.gz"
 
-        # Option B: base-align the emitted URDF (neutralises inertials, etc.).
-        nocs.bake_base_aligned_link_frames(model)
         sidecar = state.build_sidecar()
 
         src_dir = model.urdf_path.parent

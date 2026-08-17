@@ -8,7 +8,8 @@ that link's local frame.
 Anything that is not a clean serial chain of single-DOF joints (branching,
 multi-DOF, mimic couplings, unsupported joint types) is *logged and skipped* by
 setting ``ObjectModel.skip_reason`` rather than raising -- the batch pipeline
-relies on that to keep going.
+relies on that to keep going. Callers may opt into fixed-only side branches;
+the moving-joint skeleton must still be serial.
 """
 
 from __future__ import annotations
@@ -82,11 +83,12 @@ class ObjectModel:
     sub_category: str              # leaf folder, e.g. serial_elbow_arm
     split: str                     # train | val | test
     base_link: str
-    chain: List[str]               # link names, base -> tip
-    joints: List[JointSpec]        # ordered base -> tip (chain joints only)
+    chain: List[str]               # link names in parent-before-child order
+    joints: List[JointSpec]        # joints in parent-before-child order
     links: Dict[str, LinkSpec]
     urdf: yourdfpy.URDF            # live handle, used to write the canonical URDF
     skip_reason: Optional[str] = None
+    fixed_branches_allowed: bool = False
     # Filled in by later stages:
     canonical_q: Dict[str, float] = field(default_factory=dict)
     canonical_fallback: bool = False
@@ -171,11 +173,18 @@ def _sample_link_points(
 # --------------------------------------------------------------------------- #
 # Chain extraction
 # --------------------------------------------------------------------------- #
-def _extract_serial_chain(urdf: yourdfpy.URDF) -> tuple[List[str], List[str], Optional[str]]:
+def _extract_serial_chain(
+    urdf: yourdfpy.URDF,
+    *,
+    allow_fixed_branches: bool = False,
+) -> tuple[List[str], List[str], Optional[str]]:
     """Return ``(link_chain, joint_name_chain, skip_reason)``.
 
-    The chain follows parent->child from the base link.  If any link has more
-    than one child joint we have branching, which this pipeline does not handle.
+    By default the chain follows parent->child from the base link and rejects
+    every branch. With ``allow_fixed_branches``, the full link tree is returned
+    in parent-before-child order, but no link may have multiple outgoing
+    branches that contain non-fixed joints. Thus rigid visual/structural side
+    branches are retained while the moving-joint skeleton remains serial.
     """
     child_links = {j.child for j in urdf.robot.joints}
     roots = [l.name for l in urdf.robot.links if l.name not in child_links]
@@ -186,6 +195,97 @@ def _extract_serial_chain(urdf: yourdfpy.URDF) -> tuple[List[str], List[str], Op
     children_of: Dict[str, List] = {}
     for j in urdf.robot.joints:
         children_of.setdefault(j.parent, []).append(j)
+
+    if allow_fixed_branches:
+        # URDF is expected to be a rooted tree: every non-root link has exactly
+        # one inbound joint. Check this explicitly before traversing it.
+        parent_counts: Dict[str, int] = {}
+        for joint in urdf.robot.joints:
+            parent_counts[joint.child] = parent_counts.get(joint.child, 0) + 1
+        multiply_parented = sorted(
+            name for name, count in parent_counts.items() if count > 1
+        )
+        if multiply_parented:
+            return [], [], (
+                "links with multiple parent joints: "
+                + ", ".join(multiply_parented)
+            )
+
+        moving_cache: Dict[str, bool] = {}
+        visiting_moving = set()
+
+        def subtree_has_moving_joint(link_name: str) -> bool:
+            cached = moving_cache.get(link_name)
+            if cached is not None:
+                return cached
+            if link_name in visiting_moving:
+                raise ValueError(f"cycle at link '{link_name}'")
+            visiting_moving.add(link_name)
+            result = any(
+                joint.type != "fixed" or subtree_has_moving_joint(joint.child)
+                for joint in children_of.get(link_name, [])
+            )
+            visiting_moving.remove(link_name)
+            moving_cache[link_name] = result
+            return result
+
+        try:
+            for parent, outgoing in children_of.items():
+                moving_branches = [
+                    joint
+                    for joint in outgoing
+                    if joint.type != "fixed"
+                    or subtree_has_moving_joint(joint.child)
+                ]
+                if len(moving_branches) > 1:
+                    return [], [], (
+                        f"moving-joint branching at link '{parent}' "
+                        f"({len(moving_branches)} moving branches)"
+                    )
+        except ValueError as exc:
+            return [], [], str(exc)
+
+        link_order: List[str] = []
+        joint_order: List[str] = []
+        visited = set()
+        visiting = set()
+
+        def walk(link_name: str) -> None:
+            if link_name in visiting:
+                raise ValueError(f"cycle at link '{link_name}'")
+            if link_name in visited:
+                return
+            visiting.add(link_name)
+            visited.add(link_name)
+            link_order.append(link_name)
+            outgoing = children_of.get(link_name, [])
+            # Visit the articulated backbone first, followed by fixed-only
+            # attachments in their original URDF order.
+            ordered = sorted(
+                enumerate(outgoing),
+                key=lambda item: (
+                    not (
+                        item[1].type != "fixed"
+                        or subtree_has_moving_joint(item[1].child)
+                    ),
+                    item[0],
+                ),
+            )
+            for _, joint in ordered:
+                joint_order.append(joint.name)
+                walk(joint.child)
+            visiting.remove(link_name)
+
+        try:
+            walk(base)
+        except ValueError as exc:
+            return [], [], str(exc)
+
+        all_links = {link.name for link in urdf.robot.links}
+        missing = sorted(all_links - visited)
+        if missing:
+            return [], [], "links unreachable from base: " + ", ".join(missing)
+        return link_order, joint_order, None
 
     link_chain = [base]
     joint_chain: List[str] = []
@@ -228,6 +328,7 @@ def load_object(
     split: str,
     n_points_per_link: int = 2048,
     seed: int = 0,
+    allow_fixed_branches: bool = False,
 ) -> ObjectModel:
     """Parse ``urdf_path`` into an :class:`ObjectModel` (Stage 1).
 
@@ -242,7 +343,10 @@ def load_object(
     )
     urdf_dir = Path(urdf_path).parent
 
-    link_chain, joint_names, skip = _extract_serial_chain(urdf)
+    link_chain, joint_names, skip = _extract_serial_chain(
+        urdf,
+        allow_fixed_branches=allow_fixed_branches,
+    )
 
     joint_map = {j.name: j for j in urdf.robot.joints}
     joints: List[JointSpec] = []
@@ -277,6 +381,7 @@ def load_object(
         links=links,
         urdf=urdf,
         skip_reason=skip,
+        fixed_branches_allowed=allow_fixed_branches,
     )
     if skip:
         logger.info("SKIP %s: %s", object_id, skip)

@@ -79,6 +79,7 @@ def collect_fit_dirs(
             f"**/sub_categories/*/fit/{dataset_type}",
             f"*/sub_categories/*/{dataset_type}",
             f"*/*/{dataset_type}",
+            f"*/{dataset_type}",
         ]))
 
     for category in categories:
@@ -1244,7 +1245,7 @@ def parse_args() -> argparse.Namespace:
     )
 
     # Generation controls (mirrors the single-pose generator).
-    parser.add_argument("--point-source", choices=("scan", "mesh-sampling", "both"), default="scan")
+    parser.add_argument("--point-source", choices=("scan", "mesh-sampling", "both"), default="mesh-sampling")
     parser.add_argument("--num-scenes", type=int, default=1000)
     parser.add_argument("--num-proc", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)

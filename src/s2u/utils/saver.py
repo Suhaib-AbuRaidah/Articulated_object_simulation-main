@@ -39,9 +39,11 @@ def get_mesh_pose(visual, physicsClientId):
                               np.array(localVisualFramePosition))
     if linkIndex != -1:
         linkState = get_link_pose((objectUniqueId, linkIndex), physicsClientId)
-        linkOffsetState = get_link_local_offset((objectUniqueId, linkIndex), physicsClientId)
-        linkOffsetState.translation = np.array([0, 0, 0])
-        linkOffsetState = linkOffsetState * visual_offset
+        # getVisualShapeData already reports localVisualFrame* in the URDF
+        # link frame. Applying the link's local inertial orientation here a
+        # second time corrupts visual poses whenever that inertial frame is not
+        # identity (for example after a geometry/axis orientation correction).
+        linkOffsetState = visual_offset
     else:
         linkState = get_body_pose(objectUniqueId, physicsClientId)
         linkOffsetState = visual_offset
