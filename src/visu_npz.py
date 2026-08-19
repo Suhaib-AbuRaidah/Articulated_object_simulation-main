@@ -8,7 +8,7 @@ from visu_npz_test import create_aabb_lineset
 sys.path.append('/home/suhaib/Ditto/Articulated_object_simulation-main')
 
 # data_path = os.path.expanduser("~/Articulated_object_simulation-main/data/dataset/robotic_arm_zero/samples")
-data_path = os.path.expanduser("~/Articulated_object_simulation-main/data/particulate_nocs_zero/cartesian_stage/**/samples")
+data_path = os.path.expanduser("~/Articulated_object_simulation-main/data/particulate_nocs_zero/laptop_stand_with_articulated_height_adjustment/**/samples")
 # # data_path = os.path.expanduser("~/particulate/dataset/train/samples")
 # print (f"Data path: {data_path}")
 # npz_files = glob.glob(os.path.join(data_path, "*.npz"))
@@ -71,6 +71,7 @@ index = np.random.randint(0, len(npz_files))
 
 geometries = []
 for index in range(len(npz_files)):
+    # geometries = []
     print(f"Index: {index}")
     npz_file = npz_files[index]
     data = np.load(npz_file)

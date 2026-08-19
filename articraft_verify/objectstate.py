@@ -773,6 +773,9 @@ class ObjectState:
             "verification": {
                 "raw_urdf": self.raw_urdf,
                 "fixed_branches_allowed": self.model.fixed_branches_allowed,
+                "converted_mimic_joints": list(
+                    self.model.converted_mimic_joints
+                ),
                 "frames_baked_into_urdf": self.frames_baked,
                 "applied_joint_state": dict(self.applied_joint_cfg),
                 "counter_rotated_link_frames_for_joint_state": (

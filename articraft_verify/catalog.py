@@ -56,6 +56,7 @@ class Catalog:
             urdf, object_id=ref.object_id, source_archive=ref.archive,
             category=ref.category, sub_category=ref.sub_category, split=ref.split,
             allow_fixed_branches=self.allow_fixed_branches,
+            convert_mimic_to_independent=True,
         )
 
 

@@ -109,8 +109,8 @@ python scripts/visualize_object_frames.py \
 
 python -m articraft_verify \
  --dataset-root data/urdfs/Dataset \
- --category astronomical_telescope_on_tripod  \
- --sub-category astronomical_telescope_on_tripod \
+ --category laptop_stand_with_articulated_height_adjustment  \
+ --sub-category laptop_stand_with_articulated_height_adjustment \
  --split train \
  --output-dir /home/aburaidah/Articulated_object_simulation-main/data/urdfs/Verified \
  --raw-urdf \
@@ -119,11 +119,11 @@ python -m articraft_verify \
 
 dataset_type="train"
 python scripts/generate_particulate_pointcloud_nocs_data.py \
-  "./data/particulate_nocs_zero/cartesian_stage/$dataset_type" \
-  --articraft-root ./data/urdfs/Verified/cartesian_stage \
+  "./data/particulate_nocs_zero/laptop_stand_with_articulated_height_adjustment/$dataset_type" \
+  --articraft-root ./data/urdfs/Verified/laptop_stand_with_articulated_height_adjustment \
   --all-categories \
   --dataset-type "$dataset_type" \
-  --object-set "cartesian_stage_${dataset_type}_nocs_zero" \
+  --object-set "laptop_stand_with_articulated_height_adjustment_${dataset_type}_nocs_zero" \
   --one-per-object \
   --canonical \
   --point-sampling \

@@ -71,6 +71,13 @@ and brackets while still rejecting objects whose moving-joint skeleton branches.
 The fixed links remain part of rendering, frame transforms, NOCS/NPCS, and the
 saved URDF; they are not discarded or flattened.
 
+Mimic joints are accepted automatically by the verifier and converted to
+ordinary independent joints in memory. Their joint type, axis, origin, and
+limits are retained, but the emitted `model.urdf` omits the `<mimic>` element.
+The source archive is never changed, and the original mimic target, multiplier,
+and offset are recorded under `verification.converted_mimic_joints` in
+`canonical.json` and in the verifier decision log.
+
 ## Output (never touches originals)
 
 ```

@@ -526,6 +526,15 @@ class VerifierApp:
         ]
         if self.state.model.canonical_fallback:
             lines.append("⚠️ Stage-2 mid-limit fallback (extension unreachable)")
+        if self.state.model.converted_mimic_joints:
+            names = [
+                conversion["joint"]
+                for conversion in self.state.model.converted_mimic_joints
+            ]
+            lines.append(
+                "⚠️ mimic joint(s) converted to independent joints: "
+                f"`{names}`"
+            )
         if extra:
             lines.append(f"_{extra}_")
         self.status.content = "\n\n".join(lines)

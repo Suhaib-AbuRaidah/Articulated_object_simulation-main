@@ -75,12 +75,10 @@ if __name__ == "__main__":
     points = points *np.random.uniform(1.0, 4.0)+ np.random.uniform(0.0, 3.0)
     max = np.max(points, axis=0)
     min = np.min(points, axis=0)
-    mean = np.mean(points, axis=0)
-    print(f"mean: {mean}, mean_aabb: {(min+max)/2}, min: {min}, max: {max}")
     bbox_center = (min + max) / 2
     diag = max-min
     len_diag = np.linalg.norm(diag)
-    nocs_original = 0.5+(points-bbox_center) / len_diag if len_diag != 0 else points - mean
+    nocs_original = 0.5+(points-bbox_center) / len_diag
     nocs_mine  = (points-min) / len_diag if len_diag != 0 else points - min
     nocs_claude = (points-min)/ np.max(max-min) if np.max(max-min) != 0 else points - min
     # points = 0.5+(points - mean)/ len_diag if len_diag != 0 else points - mean

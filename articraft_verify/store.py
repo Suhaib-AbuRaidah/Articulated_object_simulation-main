@@ -69,6 +69,9 @@ class DecisionStore:
             "outcome": outcome,                       # accepted | corrected | skipped
             "raw_urdf": state.raw_urdf,
             "fixed_branches_allowed": state.model.fixed_branches_allowed,
+            "converted_mimic_joints": list(
+                state.model.converted_mimic_joints
+            ),
             "frames_baked_into_urdf": state.frames_baked,
             "applied_joint_state": dict(state.applied_joint_cfg),
             "counter_rotated_link_frames_for_joint_state": (

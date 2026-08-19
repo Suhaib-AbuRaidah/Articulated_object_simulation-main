@@ -89,6 +89,7 @@ class ObjectModel:
     urdf: yourdfpy.URDF            # live handle, used to write the canonical URDF
     skip_reason: Optional[str] = None
     fixed_branches_allowed: bool = False
+    converted_mimic_joints: List[Dict[str, object]] = field(default_factory=list)
     # Filled in by later stages:
     canonical_q: Dict[str, float] = field(default_factory=dict)
     canonical_fallback: bool = False
@@ -329,6 +330,8 @@ def load_object(
     n_points_per_link: int = 2048,
     seed: int = 0,
     allow_fixed_branches: bool = False,
+    allow_mimic_joints: bool = False,
+    convert_mimic_to_independent: bool = False,
 ) -> ObjectModel:
     """Parse ``urdf_path`` into an :class:`ObjectModel` (Stage 1).
 
@@ -350,15 +353,37 @@ def load_object(
 
     joint_map = {j.name: j for j in urdf.robot.joints}
     joints: List[JointSpec] = []
+    converted_mimic_joints: List[Dict[str, object]] = []
     if not skip:
         for jn in joint_names:
-            jspec = _joint_spec(joint_map[jn])
+            urdf_joint = joint_map[jn]
+            jspec = _joint_spec(urdf_joint)
             if jspec.type not in _SUPPORTED_TYPES:
                 skip = f"unsupported joint type '{jspec.type}' on '{jspec.name}'"
                 break
-            if joint_map[jn].mimic is not None:
+            mimic = urdf_joint.mimic
+            if (
+                mimic is not None
+                and not allow_mimic_joints
+                and not convert_mimic_to_independent
+            ):
                 skip = f"mimic joint '{jspec.name}' (multi-DOF coupling)"
                 break
+            if mimic is not None and convert_mimic_to_independent:
+                converted_mimic_joints.append(
+                    {
+                        "joint": jspec.name,
+                        "mimicked_joint": mimic.joint,
+                        "original_multiplier": float(mimic.multiplier),
+                        "original_offset": float(mimic.offset),
+                        "conversion": "independent_joint",
+                    }
+                )
+                # Removing this object causes yourdfpy to omit <mimic> when
+                # the verified URDF is serialized. Joint type, axis, origin,
+                # and limits remain unchanged, so it becomes an ordinary
+                # independently controlled URDF joint.
+                urdf_joint.mimic = None
             joints.append(jspec)
 
     # Sample geometry per link regardless (cheap, and useful for QC even if the
@@ -382,6 +407,7 @@ def load_object(
         urdf=urdf,
         skip_reason=skip,
         fixed_branches_allowed=allow_fixed_branches,
+        converted_mimic_joints=converted_mimic_joints,
     )
     if skip:
         logger.info("SKIP %s: %s", object_id, skip)
