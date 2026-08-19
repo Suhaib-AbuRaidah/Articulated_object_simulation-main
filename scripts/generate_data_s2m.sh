@@ -133,3 +133,11 @@ python scripts/generate_particulate_pointcloud_nocs_data.py \
   --num-proc 1 \
   --max-attempts-per-sample 10 \
   --log-every 1
+
+python scripts/cluster_urdf_hog.py \
+  --category laptop_stand_with_articulated_height_adjustment \
+  --sub-category laptop_stand_with_articulated_height_adjustment \
+  --clusters 3 \
+  --part-weight 0.55 \
+  --kinematic-weight 0.20 \
+  --rest-hog-weight 0.25
